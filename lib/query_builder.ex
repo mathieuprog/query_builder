@@ -85,6 +85,9 @@ defmodule QueryBuilder do
   @doc ~S"""
   A join query expression.
 
+  Third argument `type` may be passed one of the possible values for
+  `Ecto.Query.join/5`'s qualifier argument.
+
   Example:
   ```
   QueryBuilder.join(query, :articles, :left)
