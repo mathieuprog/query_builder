@@ -123,21 +123,23 @@ defmodule QueryBuilderTest do
   end
 
   test "order_by with assocs" do
-    authors_ordered_asc =
+    alice =
       User
-      |> QueryBuilder.where(:role, name@role: "author")
-      |> QueryBuilder.order_by(name: :asc)
-      |> Repo.all()
+      |> QueryBuilder.where(name: "Alice")
+      |> QueryBuilder.order_by(:authored_articles, title@authored_articles: :asc)
+      |> QueryBuilder.preload(:authored_articles)
+      |> Repo.one!()
 
-    assert "Alice" == hd(authors_ordered_asc).name
+    assert hd(alice.authored_articles).title == "ELIXIR V1.9 RELEASED"
 
-    authors_ordered_desc =
+    alice =
       User
-      |> QueryBuilder.where(:role, name@role: "author")
-      |> QueryBuilder.order_by(name: :desc)
-      |> Repo.all()
+      |> QueryBuilder.where(name: "Alice")
+      |> QueryBuilder.order_by(:authored_articles, title@authored_articles: :desc)
+      |> QueryBuilder.preload(:authored_articles)
+      |> Repo.one!()
 
-    assert "Bob" == hd(authors_ordered_desc).name
+    assert hd(alice.authored_articles).title == "MINT, A NEW HTTP CLIENT FOR ELIXIR"
   end
 
   test "join" do
