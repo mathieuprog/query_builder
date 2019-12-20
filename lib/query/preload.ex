@@ -5,6 +5,9 @@ defmodule QueryBuilder.Query.Preload do
 
   def preload(query, value) do
     token = QueryBuilder.Token.token(query, value)
+
+    # Join one-to-one associations as it is more advantageous to include those into
+    # the result set rather than emitting a new DB query.
     {query, token} = QueryBuilder.JoinMaker.make_joins(query, token, mode: :if_preferable)
 
     do_preload(query, token)
@@ -13,14 +16,25 @@ defmodule QueryBuilder.Query.Preload do
   defp do_preload(query, token) do
     flattened_assoc_data = flatten_assoc_data(token)
 
+    # Firstly, give `Ecto.Query.preload/3` the list of associations that have been
+    # joined, such as:
+    # `Ecto.Query.preload.(query, [articles: a, user: u, role: r], [articles: {a, [user: {u, [role: r]}]}])`
     query =
       flattened_assoc_data
+      # Filter only the associations that have been joined
       |> Enum.map(fn assoc_data_list ->
         Enum.flat_map(assoc_data_list, fn
           %{has_joined: false} -> []
           assoc_data -> [{assoc_data.assoc_binding, assoc_data.assoc_field}]
         end)
       end)
+      # Get rid of the associations' lists that are redundant;
+      # for example for the 4 lists below:
+      # `[{:binding1, :field1}]`
+      # `[{:binding1, :field1}, {:binding2, :field2}]`
+      # `[{:binding1, :field1}, {:binding2, :field2}]`
+      # `[{:binding1, :field1}, {:binding2, :field2}, {:binding3, :field3}]`
+      # only the last list should be preserved.
       |> Enum.uniq()
       |> (fn lists ->
             Enum.filter(
@@ -38,6 +52,9 @@ defmodule QueryBuilder.Query.Preload do
         do_preload_with_bindings(query, list)
       end)
 
+    # Secondly, give `Ecto.Query.preload/3` the list of associations that have not
+    # been joined, such as:
+    # `Ecto.Query.preload.(query, [articles: [comments: :comment_likes]])`
     query =
       flattened_assoc_data
       |> Enum.map(fn assoc_data_list ->

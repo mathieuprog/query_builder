@@ -2,7 +2,7 @@ defmodule QueryBuilder.Query.Where do
   @moduledoc false
 
   require Ecto.Query
-  import QueryBuilder.Query.Helper
+  import QueryBuilder.Utils
 
   def where(query, assoc_fields, filters) do
     token = QueryBuilder.Token.token(query, assoc_fields)
@@ -24,14 +24,14 @@ defmodule QueryBuilder.Query.Where do
   end
 
   defp apply_filter(query, token, {field1, operator, field2}) when is_atom(field2) do
-    {field1, binding_field1} = field_and_binding(query, token, field1)
-    {field2, binding_field2} = field_and_binding(query, token, field2)
+    {field1, binding_field1} = find_field_and_binding_from_token(query, token, field1)
+    {field2, binding_field2} = find_field_and_binding_from_token(query, token, field2)
 
     do_where(query, binding_field1, binding_field2, {field1, operator, field2})
   end
 
   defp apply_filter(query, token, {field, operator, value}) do
-    {field, binding} = field_and_binding(query, token, field)
+    {field, binding} = find_field_and_binding_from_token(query, token, field)
 
     do_where(query, binding, {field, operator, value})
   end

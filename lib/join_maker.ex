@@ -3,6 +3,14 @@ defmodule QueryBuilder.JoinMaker do
 
   require Ecto.Query
 
+  @doc ~S"""
+  Options may be:
+  * `:mode`: if set to `:if_preferable`, schemas are joined only if it is better
+  performance-wise; this happens only for one case: when the association has a
+  one-to-one cardinality, it is better to join and include the association's result
+  in the result set of the query, rather than emitting a new DB query.
+  * `:type`: see `Ecto.Query.join/5`'s qualifier argument for possible values.
+  """
   def make_joins(query, token, options \\ []) do
     _make_joins(query, token, bindings(token), options, [])
   end

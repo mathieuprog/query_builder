@@ -2,15 +2,61 @@ defmodule QueryBuilder.Token do
   @moduledoc false
 
   defmodule State do
+    @moduledoc false
+    # @moduledoc """
+    # The `token` function below received way too many arguments (which made the code
+    # harder to read and led `mix format` to split the arguments over multiple lines).
+    #
+    # The purpose of this struct is to reduce the number of arguments and to maintain
+    # state between `token`'s recursive calls, hence its name.
+    # """
+
     defstruct source_binding: nil,
               source_schema: nil,
+              # `bindings` allows to keep track of all the binding names in order to
+              # detect a binding name that is going to be used twice when joining
+              # associations; in such case, the `token` function raises an error.
               bindings: []
   end
 
+  @doc ~S"""
+  The purpose of the `token/2` function is to generate a data structure containing
+  information about given association tree.
+
+  It receives a query and a list (with nested lists) of association fields (atoms).
+  For example:
+  ```
+  [
+    {:authored_articles,
+     [
+       :article_likes,
+       :article_stars,
+       {:comments, [:comment_stars, comment_likes: :user]}
+     ]},
+    :published_articles
+  ]
+  ```
+
+  For each association field, a map will be created with the following keys and values:
+
+    * `:assoc_binding`: *named binding* to be used (atom)
+    * `:assoc_field`: field name (atom)
+    * `:assoc_schema`: module name of the schema (atom)
+    * `:cardinality`: cardinality (atom `:one` or `:many`)
+    * `:has_joined`: indicating whether the association has already been joined or not
+    with Ecto query (boolean)
+    * `:nested_assocs`: the nested associations (list)
+    * `:source_binding`: *named binding* of the source schema (atom)
+    * `:source_schema`: module name of the source schema (atom)
+
+  This information allows the exposed functions such as `QueryBuilder.where/3` to join
+  associations, refer to associations, etc.
+  """
   def token(query, value) do
     source_schema = QueryBuilder.Utils.root_schema(query)
 
     state = %State{
+      # the name of the binding of the query's root schema is the schema itself
       source_binding: source_schema,
       source_schema: source_schema
     }

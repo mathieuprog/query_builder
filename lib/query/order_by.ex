@@ -2,7 +2,7 @@ defmodule QueryBuilder.Query.OrderBy do
   @moduledoc false
 
   require Ecto.Query
-  import QueryBuilder.Query.Helper
+  import QueryBuilder.Utils
 
   def order_by(query, assoc_fields, value) do
     token = QueryBuilder.Token.token(query, assoc_fields)
@@ -20,7 +20,7 @@ defmodule QueryBuilder.Query.OrderBy do
   end
 
   defp apply_order(query, token, {field, direction}) do
-    {field, binding} = field_and_binding(query, token, field)
+    {field, binding} = find_field_and_binding_from_token(query, token, field)
 
     Ecto.Query.order_by(query, [{^binding, x}], [{^direction, field(x, ^field)}])
   end
