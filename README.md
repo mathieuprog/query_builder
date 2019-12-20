@@ -164,7 +164,7 @@ defmodule MyApp.Blog do
 end
 ```
 
-The function get now be called as follows (for instance, from a Controller):
+The function can now be called as follows (for instance, from a Controller):
 
 ```elixir
 Blog.get_article_by_id(id, preload: [:comments])
