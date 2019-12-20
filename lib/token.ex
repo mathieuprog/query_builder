@@ -132,10 +132,10 @@ defmodule QueryBuilder.Token do
     cardinality = assoc_cardinality(source_schema, assoc_field)
 
     assoc_binding =
-      with assoc_binding when not is_nil(assoc_binding) <- source_schema.binding(assoc_field) do
+      with assoc_binding when not is_nil(assoc_binding) <- source_schema._binding(assoc_field) do
         assoc_binding
       else
-        _ -> assoc_schema.binding()
+        _ -> assoc_schema._binding()
       end
 
     has_joined = Ecto.Query.has_named_binding?(query, assoc_binding)

@@ -56,9 +56,9 @@ defmodule QueryBuilder.JoinMaker do
       # see schema.ex's module doc in order to understand what's going on here
       query =
         if String.contains?(to_string(assoc_binding), "__") do
-          source_schema.join(query, type, source_binding, assoc_field)
+          source_schema._join(query, type, source_binding, assoc_field)
         else
-          assoc_schema.join(query, type, source_binding, assoc_field)
+          assoc_schema._join(query, type, source_binding, assoc_field)
         end
 
       {

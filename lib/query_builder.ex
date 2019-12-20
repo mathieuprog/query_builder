@@ -119,8 +119,8 @@ defmodule QueryBuilder do
   defp ensure_query_has_binding(query) do
     schema = QueryBuilder.Utils.root_schema(query)
 
-    unless Query.has_named_binding?(query, schema.binding()) do
-      schema.query()
+    unless Query.has_named_binding?(query, schema._binding()) do
+      schema._query()
     else
       query
     end
