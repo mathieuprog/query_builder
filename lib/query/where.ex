@@ -40,16 +40,32 @@ defmodule QueryBuilder.Query.Where do
     Ecto.Query.where(query, [{^binding, x}], field(x, ^field) == ^value)
   end
 
+  defp do_where(query, binding, {field, :ne, value}) do
+    Ecto.Query.where(query, [{^binding, x}], field(x, ^field) != ^value)
+  end
+
+  defp do_where(query, binding, {field, :gt, value}) do
+    Ecto.Query.where(query, [{^binding, x}], field(x, ^field) > ^value)
+  end
+
+  defp do_where(query, binding, {field, :ge, value}) do
+    Ecto.Query.where(query, [{^binding, x}], field(x, ^field) >= ^value)
+  end
+
+  defp do_where(query, binding, {field, :lt, value}) do
+    Ecto.Query.where(query, [{^binding, x}], field(x, ^field) < ^value)
+  end
+
+  defp do_where(query, binding, {field, :le, value}) do
+    Ecto.Query.where(query, [{^binding, x}], field(x, ^field) <= ^value)
+  end
+
   defp do_where(query, binding1, binding2, {field1, :eq, field2}) do
     Ecto.Query.where(
       query,
       [{^binding1, x}, {^binding2, y}],
       field(x, ^field1) == field(y, ^field2)
     )
-  end
-
-  defp do_where(query, binding, {field, :ne, value}) do
-    Ecto.Query.where(query, [{^binding, x}], field(x, ^field) != ^value)
   end
 
   defp do_where(query, binding1, binding2, {field1, :ne, field2}) do
@@ -60,20 +76,12 @@ defmodule QueryBuilder.Query.Where do
     )
   end
 
-  defp do_where(query, binding, {field, :gt, value}) do
-    Ecto.Query.where(query, [{^binding, x}], field(x, ^field) > ^value)
-  end
-
   defp do_where(query, binding1, binding2, {field1, :gt, field2}) do
     Ecto.Query.where(
       query,
       [{^binding1, x}, {^binding2, y}],
       field(x, ^field1) > field(y, ^field2)
     )
-  end
-
-  defp do_where(query, binding, {field, :ge, value}) do
-    Ecto.Query.where(query, [{^binding, x}], field(x, ^field) >= ^value)
   end
 
   defp do_where(query, binding1, binding2, {field1, :ge, field2}) do
@@ -84,20 +92,12 @@ defmodule QueryBuilder.Query.Where do
     )
   end
 
-  defp do_where(query, binding, {field, :lt, value}) do
-    Ecto.Query.where(query, [{^binding, x}], field(x, ^field) < ^value)
-  end
-
   defp do_where(query, binding1, binding2, {field1, :lt, field2}) do
     Ecto.Query.where(
       query,
       [{^binding1, x}, {^binding2, y}],
       field(x, ^field1) < field(y, ^field2)
     )
-  end
-
-  defp do_where(query, binding, {field, :le, value}) do
-    Ecto.Query.where(query, [{^binding, x}], field(x, ^field) <= ^value)
   end
 
   defp do_where(query, binding1, binding2, {field1, :le, field2}) do
