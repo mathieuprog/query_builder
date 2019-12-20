@@ -68,7 +68,7 @@ end
 ```
 
 You may also specify the schema's associations to `QueryBuilder` in order to remedy
-a few limitations when building queries:
+some limitations when building queries:
 
 ```elixir
 defmodule MyApp.User do
@@ -102,7 +102,7 @@ QueryBuilder.where(query, [role: :permissions], name@permissions: :write)
 `QueryBuilder.order_by/2`
 
 ```elixir
-QueryBuilder.order_by(query, lasstname: :asc, firstname: :asc)
+QueryBuilder.order_by(query, lastname: :asc, firstname: :asc)
 ```
 
 `QueryBuilder.order_by/3`
