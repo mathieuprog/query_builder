@@ -54,7 +54,7 @@ User
 
 ```elixir
 User
-|> QueryBuilder.where([role: :permission], name@permission: "delete")
+|> QueryBuilder.where([role: :permissions], name@permissions: "delete")
 |> Repo.all()
 ```
 
