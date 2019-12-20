@@ -3,13 +3,11 @@ defmodule QueryBuilder.Token do
 
   defmodule State do
     @moduledoc false
-    # @moduledoc """
     # The `token` function below received way too many arguments (which made the code
     # harder to read and led `mix format` to split the arguments over multiple lines).
     #
     # The purpose of this struct is to reduce the number of arguments and to maintain
     # state between `token`'s recursive calls, hence its name.
-    # """
 
     defstruct source_binding: nil,
               source_schema: nil,
