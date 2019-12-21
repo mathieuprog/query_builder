@@ -18,7 +18,7 @@ Its primary goal is to allow Context functions to receive a set of filters and
 options:
 
 ```elixir
-Blog.list_articles(preload: [:comments], order_by: [title: :asc])
+Blog.list_articles(preload: :comments, order_by: [title: :asc])
 Blog.list_articles(preload: [:category, comments: :user])
 ```
 

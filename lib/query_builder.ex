@@ -116,6 +116,7 @@ defmodule QueryBuilder do
       cond do
         is_tuple(arguments) -> Tuple.to_list(arguments)
         is_list(arguments) -> [arguments]
+        true -> List.wrap(arguments)
       end
 
     apply(__MODULE__, operation, [query | arguments])

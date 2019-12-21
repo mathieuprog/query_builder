@@ -183,7 +183,7 @@ defmodule QueryBuilderTest do
       |> QueryBuilder.from_list(
         where: [name: "Alice", email: "alice@example.com"],
         order_by: {:authored_articles, title@authored_articles: :asc},
-        preload: [:authored_articles]
+        preload: :authored_articles
       )
       |> Repo.one!()
 
