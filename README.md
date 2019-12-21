@@ -173,7 +173,7 @@ Blog.get_article_by_id(id, preload: [:likes])
 
 Blog.get_article_by_id(
   id,
-  order_by: [:comments, inserted_at@comments: :desc],
+  order_by: {:comments, inserted_at@comments: :desc},
   preload: [comments: :user]
 )
 ```
@@ -185,7 +185,7 @@ Add `query_builder` for Elixir as a dependency in your `mix.exs` file:
 ```elixir
 def deps do
   [
-    {:query_builder, "~> 0.4.0"}
+    {:query_builder, "~> 0.5.0"}
   ]
 end
 ```
