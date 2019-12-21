@@ -56,7 +56,8 @@ defmodule QueryBuilder.Token do
     state = %State{
       # the name of the binding of the query's root schema is the schema itself
       source_binding: source_schema,
-      source_schema: source_schema
+      source_schema: source_schema,
+      bindings: [source_schema]
     }
 
     token([], query, List.wrap(value), state)
