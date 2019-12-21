@@ -176,4 +176,17 @@ defmodule QueryBuilderTest do
 
     assert %{changed: :equal} = MapDiff.diff(Repo.all(query), Repo.all(built_query))
   end
+
+  test "from list" do
+    alice =
+      User
+      |> QueryBuilder.from_list([
+        where: [name: "Alice", email: "alice@example.com"],
+        order_by: {:authored_articles, title@authored_articles: :asc},
+        preload: [:authored_articles]
+      ])
+      |> Repo.one!()
+
+    assert hd(alice.authored_articles).title == "ELIXIR V1.9 RELEASED"
+  end
 end

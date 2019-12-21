@@ -112,7 +112,13 @@ defmodule QueryBuilder do
   def from_list(query, []), do: query
 
   def from_list(query, [{operation, arguments} | tail]) do
-    apply(__MODULE__, operation, [query, arguments])
+    arguments =
+      cond do
+        is_tuple(arguments) -> Tuple.to_list(arguments)
+        is_list(arguments) -> [arguments]
+      end
+
+    apply(__MODULE__, operation, [query | arguments])
     |> from_list(tail)
   end
 
