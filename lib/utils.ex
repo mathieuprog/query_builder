@@ -6,20 +6,6 @@ defmodule QueryBuilder.Utils do
     context
   end
 
-  def query_to_string(query), do: Inspect.Ecto.Query.to_string(query)
-
-  def inspect_query(query, label \\ nil)
-
-  def inspect_query(query, nil) do
-    IO.puts(query_to_string(query))
-    query
-  end
-
-  def inspect_query(query, label: label) do
-    IO.puts("#{label}:\n#{query_to_string(query)}")
-    query
-  end
-
   def find_field_and_binding_from_token(query, token, field) do
     split_field = String.split(to_string(field), "@")
     [field, assoc_field] = [Enum.at(split_field, 0), Enum.at(split_field, 1)]
