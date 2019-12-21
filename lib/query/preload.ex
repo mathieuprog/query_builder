@@ -40,11 +40,7 @@ defmodule QueryBuilder.Query.Preload do
             Enum.filter(
               lists,
               &(!Enum.any?(lists -- [&1], fn list ->
-                  # TODO use Keyword list functions
-                  String.starts_with?(
-                    Enum.map_join(list, fn {k, v} -> "#{k}#{v}" end),
-                    Enum.map_join(&1, fn {k, v} -> "#{k}#{v}" end)
-                  )
+                  Keyword.equal?(&1, Enum.slice(list, 0, length(&1)))
                 end))
             )
           end).()
