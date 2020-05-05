@@ -124,7 +124,7 @@ QueryBuilder.or_where(query, firstname: "John")
 `QueryBuilder.or_where/3`
 
 ```elixir
-QueryBuilder.or_where(query, :role, name@role: :author)
+QueryBuilder.or_where(query, :role, name@role: "author")
 ```
 
 `QueryBuilder.order_by/2`
