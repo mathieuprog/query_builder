@@ -56,6 +56,35 @@ defmodule QueryBuilder do
   end
 
   @doc ~S"""
+  An OR where query expression.
+
+  Example:
+  ```
+  QueryBuilder.or_where(query, firstname: "John")
+  ```
+  """
+  def or_where(query, filters) do
+    or_where(query, [], filters)
+  end
+
+  @doc ~S"""
+  An OR where query expression.
+
+  Associations are passed in second argument; fields from these associations can then
+  be referenced by writing the field name, followed by the "@" character and the
+  association name, as an atom. For example: `:name@users`.
+
+  Example:
+  ```
+  QueryBuilder.or_where(query, [role: :permissions], name@permissions: :write)
+  ```
+  """
+  def or_where(query, assoc_fields, filters) do
+    ensure_query_has_binding(query)
+    |> QueryBuilder.Query.Where.where(assoc_fields, filters, :or)
+  end
+
+  @doc ~S"""
   An order by query expression.
 
   Example:
