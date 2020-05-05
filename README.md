@@ -115,6 +115,19 @@ QueryBuilder.where(query, firstname: "John")
 QueryBuilder.where(query, [role: :permissions], name@permissions: :write)
 ```
 
+`QueryBuilder.or_where/2`
+
+```elixir
+QueryBuilder.or_where(query, firstname: "John")
+```
+```
+
+`QueryBuilder.or_where/3`
+
+```elixir
+QueryBuilder.or_where(query, :role, name@role: :author)
+```
+
 `QueryBuilder.order_by/2`
 
 ```elixir
