@@ -120,7 +120,6 @@ QueryBuilder.where(query, [role: :permissions], name@permissions: :write)
 ```elixir
 QueryBuilder.or_where(query, firstname: "John")
 ```
-```
 
 `QueryBuilder.or_where/3`
 
