@@ -3,6 +3,7 @@ defmodule QueryBuilder.Token do
 
   defmodule State do
     @moduledoc false
+
     # The `token` function below received way too many arguments (which made the code
     # harder to read and led `mix format` to split the arguments over multiple lines).
     #

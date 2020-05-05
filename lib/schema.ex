@@ -1,5 +1,6 @@
 defmodule QueryBuilder.Schema do
   @moduledoc false
+
   # The library code relies on named bindings to refer to associations. This module
   # allows to define a named binding for a schema, when it is used in a join.
   #
