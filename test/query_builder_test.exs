@@ -27,13 +27,16 @@ defmodule QueryBuilderTest do
     insert(:permission, %{role: role_publisher, name: "publish"})
     insert(:permission, %{role: role_reader, name: "read"})
 
-    author1 = insert(:user, %{name: "Alice", email: "alice@example.com", role: role_author})
-    author2 = insert(:user, %{name: "Bob", email: "bob@example.com", role: role_author})
-    reader = insert(:user, %{name: "Eric", email: "eric@example.com", role: role_reader})
-    insert(:user, %{name: "Dave", email: "dave@example.com", role: role_admin})
+    author1 = insert(:user, %{name: "Alice", email: "alice@example.com", role: role_author, nickname: "Alice"})
+    author2 = insert(:user, %{name: "Bob", email: "the_bob@example.com", role: role_author, nickname: "Bobby"})
+    reader = insert(:user, %{name: "Eric", email: "eric@example.com", role: role_reader, nickname: "Eric"})
+    insert(:user, %{name: "Dave", email: "dave@example.com", role: role_admin, nickname: "Dave"})
+    insert(:user, %{name: "Richard", email: "richard@example.com", role: role_admin, nickname: "Rich"})
+    insert(:user, %{name: "An% we_ird %name_%", email: "weirdo@example.com", role: role_reader, nickname: "John"})
+    insert(:user, %{name: "An_ we_ird %name_%", email: "weirdo@example.com", role: role_reader, nickname: "James"})
 
     publisher =
-      insert(:user, %{name: "Calvin", email: "calvin@example.com", role: role_publisher})
+      insert(:user, %{name: "Calvin", email: "calvin@example.com", role: role_publisher, nickname: "Calvin"})
 
     title1 = "ELIXIR V1.9 RELEASED"
     title2 = "MINT, A NEW HTTP CLIENT FOR ELIXIR"
@@ -65,7 +68,7 @@ defmodule QueryBuilderTest do
            |> Repo.one()
 
     assert User
-           |> QueryBuilder.where(name: "Bob", email: "bob@example.com")
+           |> QueryBuilder.where(name: "Bob", email: "the_bob@example.com")
            |> Repo.one()
 
     refute User
@@ -74,7 +77,7 @@ defmodule QueryBuilderTest do
 
     assert User
            |> QueryBuilder.where(name: "Bob")
-           |> QueryBuilder.where(email: "bob@example.com")
+           |> QueryBuilder.where(email: "the_bob@example.com")
            |> Repo.one()
 
     refute User
@@ -87,7 +90,107 @@ defmodule QueryBuilderTest do
       |> QueryBuilder.where({:name, :ne, "Bob"})
       |> Repo.all()
 
-    assert 4 == length(all_users_but_bob)
+    assert 7 == length(all_users_but_bob)
+
+    all_users_but_bob =
+      User
+      |> QueryBuilder.where({:name, :other_than, "Bob"})
+      |> Repo.all()
+
+    assert 7 == length(all_users_but_bob)
+
+    users_containing_ri =
+      User
+      |> QueryBuilder.where({:name, :contains, "ri", case: :i})
+      |> Repo.all()
+
+    assert 2 == length(users_containing_ri)
+
+    users_containing_ri =
+      User
+      |> QueryBuilder.where({:name, :contains, "ri", case: :insensitive})
+      |> Repo.all()
+
+    assert 2 == length(users_containing_ri)
+
+    users_containing_ri =
+      User
+      |> QueryBuilder.where({:name, :ilike, "%ri%"})
+      |> Repo.all()
+
+    assert 2 == length(users_containing_ri)
+
+    users_starts_with_ri =
+      User
+      |> QueryBuilder.where({:name, :starts_with, "ri", case: :insensitive})
+      |> Repo.all()
+
+    assert 1 == length(users_starts_with_ri)
+
+    users_starts_with_an =
+      User
+      |> QueryBuilder.where({:name, :starts_with, "an%", case: :insensitive})
+      |> Repo.all()
+
+    assert 1 == length(users_starts_with_an)
+
+    users_starts_with_ri =
+      User
+      |> QueryBuilder.where({:name, :starts_with, "ri"})
+      |> Repo.all()
+
+    assert 0 == length(users_starts_with_ri)
+
+    users_starts_with_ri =
+      User
+      |> QueryBuilder.where({:name, :like, "ri%"})
+      |> Repo.all()
+
+    assert 0 == length(users_starts_with_ri)
+
+    users_ends_with_ob =
+      User
+      |> QueryBuilder.where({:name, :ends_with, "ob"})
+      |> Repo.all()
+
+    assert 1 == length(users_ends_with_ob)
+
+    users_containing_ri =
+      User
+      |> QueryBuilder.where({:name, :contains, "ri"})
+      |> Repo.all()
+
+    assert 1 == length(users_containing_ri)
+
+    users_containing_ri =
+      User
+      |> QueryBuilder.where({:name, :contains, "Ri", case: :sensitive})
+      |> Repo.all()
+
+    assert 1 == length(users_containing_ri)
+  end
+
+  test "where comparing two fields" do
+    users_where_name_matches_nickname =
+      User
+      |> QueryBuilder.where({:name, :eq, :nickname})
+      |> Repo.all()
+
+    assert 4 == length(users_where_name_matches_nickname)
+
+    users_where_name_included_in_email =
+      User
+      |> QueryBuilder.where({:email, :contains, :name, case: :insensitive})
+      |> Repo.all()
+
+    assert 6 == length(users_where_name_included_in_email)
+
+    users_where_name_included_in_email =
+      User
+      |> QueryBuilder.where({:email, :starts_with, :name, case: :insensitive})
+      |> Repo.all()
+
+    assert 5 == length(users_where_name_included_in_email)
   end
 
   test "where with assocs" do
@@ -160,7 +263,7 @@ defmodule QueryBuilderTest do
       |> QueryBuilder.order_by(name: :desc)
       |> Repo.all()
 
-    assert "Eric" == hd(users_ordered_desc).name
+    assert "Richard" == hd(users_ordered_desc).name
   end
 
   test "order_by with assocs" do

@@ -18,6 +18,7 @@ defmodule QueryBuilder.CreateTables do
     create table(:users) do
       add(:name, :string)
       add(:email, :string)
+      add(:nickname, :string)
       add(:role_id, references(:roles))
 
       timestamps()

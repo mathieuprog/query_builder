@@ -101,7 +101,7 @@ defmodule MyApp.User do
 end
 ```
 
-Currently supported operations are:
+Currently, supported operations are:
 
 `QueryBuilder.where/2`
 
@@ -126,6 +126,36 @@ QueryBuilder.or_where(query, firstname: "John")
 ```elixir
 QueryBuilder.or_where(query, :role, name@role: "author")
 ```
+
+Above `where`/`or_where` functions support different filter operations, for instance:
+```elixir
+QueryBuilder.where(query, {:age, :greater_than, 18})
+```
+
+Supported filter operations are:
+* `:equal_to` (or `eq`)
+* `:other_than` (or `ne`)
+* `:greater_than` (or `gt`)
+* `:greater_than_or_equal_to` (or `ge`)
+* `:less_than` (or `lt`)
+* `:less_than_or_equal_to` (or `le`)
+* `:like`
+* `:ilike`
+* `:starts_with`
+* `:ends_with`
+* `:contains`
+
+Note that `:starts_with`, `:ends_with` and `:contains` operations can be written using `:like`, but offer a more declarative style and are safer, as they escape the `%` and `_` characters for you. You may also perform case insensitive searchs using these functions. Example:
+
+```elixir
+QueryBuilder.where({:name, :starts_with, "jo"})
+```
+
+```elixir
+QueryBuilder.where({:name, :starts_with, "jo", case: :insensitive}) # `:i` will also work
+```
+
+When using `:like` or `:ilike`, make sure to escape `%` and `_` characters properly.
 
 `QueryBuilder.order_by/2`
 

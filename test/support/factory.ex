@@ -17,6 +17,7 @@ defmodule QueryBuilder.Factory do
   def user_factory do
     %QueryBuilder.User{
       name: "Jane Smith",
+      nickname: "Jane",
       email: sequence(:email, &"email-#{&1}@example.com"),
       role: build(:role)
     }

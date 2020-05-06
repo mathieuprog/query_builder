@@ -5,6 +5,7 @@ defmodule QueryBuilder.User do
   schema "users" do
     field(:name, :string)
     field(:email, :string)
+    field(:nickname, :string)
 
     belongs_to(:role, QueryBuilder.Role)
     has_many(:authored_articles, QueryBuilder.Article, foreign_key: :author_id)
