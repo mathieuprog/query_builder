@@ -133,12 +133,12 @@ QueryBuilder.where(query, {:age, :greater_than, 18})
 ```
 
 Supported filter operations are:
-* `:equal_to` (or `eq`)
-* `:other_than` (or `ne`)
-* `:greater_than` (or `gt`)
-* `:greater_than_or_equal_to` (or `ge`)
-* `:less_than` (or `lt`)
-* `:less_than_or_equal_to` (or `le`)
+* `:equal_to` (or `:eq`)
+* `:other_than` (or `:ne`)
+* `:greater_than` (or `:gt`)
+* `:greater_than_or_equal_to` (or `:ge`)
+* `:less_than` (or `:lt`)
+* `:less_than_or_equal_to` (or `:le`)
 * `:like`
 * `:ilike`
 * `:starts_with`
@@ -227,7 +227,7 @@ Add `query_builder` for Elixir as a dependency in your `mix.exs` file:
 ```elixir
 def deps do
   [
-    {:query_builder, "~> 0.10.0"}
+    {:query_builder, "~> 0.11.0"}
   ]
 end
 ```
