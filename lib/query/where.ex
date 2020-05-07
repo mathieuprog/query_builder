@@ -47,7 +47,7 @@ defmodule QueryBuilder.Query.Where do
     do_where(query, binding, {field, operator, value, operator_opts}, where_type)
   end
 
-  defp do_where(query, binding, {field, operator, value, []}, where_type) when operator in [:eq, :equal] do
+  defp do_where(query, binding, {field, operator, value, []}, where_type) when operator in [:eq, :equal_to] do
     case where_type do
       :and -> Ecto.Query.where(query, [{^binding, x}], field(x, ^field) == ^value)
       :or -> Ecto.Query.or_where(query, [{^binding, x}], field(x, ^field) == ^value)
@@ -68,7 +68,7 @@ defmodule QueryBuilder.Query.Where do
     end
   end
 
-  defp do_where(query, binding, {field, operator, value, []}, where_type) when operator in [:ge, :greater_equal] do
+  defp do_where(query, binding, {field, operator, value, []}, where_type) when operator in [:ge, :greater_than_or_equal_to] do
     case where_type do
       :and -> Ecto.Query.where(query, [{^binding, x}], field(x, ^field) >= ^value)
       :or -> Ecto.Query.or_where(query, [{^binding, x}], field(x, ^field) >= ^value)
@@ -82,7 +82,7 @@ defmodule QueryBuilder.Query.Where do
     end
   end
 
-  defp do_where(query, binding, {field, operator, value, []}, where_type) when operator in [:le, :less_equal] do
+  defp do_where(query, binding, {field, operator, value, []}, where_type) when operator in [:le, :less_than_or_equal_to] do
     case where_type do
       :and -> Ecto.Query.where(query, [{^binding, x}], field(x, ^field) <= ^value)
       :or -> Ecto.Query.or_where(query, [{^binding, x}], field(x, ^field) <= ^value)
@@ -139,7 +139,7 @@ defmodule QueryBuilder.Query.Where do
     end
   end
 
-  defp do_where(query, b1, b2, {f1, operator, f2, []}, where_type) when operator in [:ne, :othecr_than] do
+  defp do_where(query, b1, b2, {f1, operator, f2, []}, where_type) when operator in [:ne, :other_than] do
     case where_type do
       :and -> Ecto.Query.where(query, [{^b1, x}, {^b2, y}], field(x, ^f1) != field(y, ^f2))
       :or -> Ecto.Query.or_where(query, [{^b1, x}, {^b2, y}], field(x, ^f1) != field(y, ^f2))

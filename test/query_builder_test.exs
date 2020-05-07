@@ -325,7 +325,8 @@ defmodule QueryBuilderTest do
     alice =
       User
       |> QueryBuilder.from_list(
-        where: [name: "Alice", email: "alice@example.com"],
+        where: [{:email, :equal_to, "alice@example.com"}],
+        where: [name: "Alice"],
         order_by: {:authored_articles, title@authored_articles: :asc},
         preload: :authored_articles
       )
