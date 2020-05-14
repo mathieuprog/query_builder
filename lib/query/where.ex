@@ -61,14 +61,14 @@ defmodule QueryBuilder.Query.Where do
     end
   end
 
-  defp do_where(query, binding, {field, :includes, value, []}, where_type) do
+  defp do_where(query, binding, {field, :include, value, []}, where_type) do
     case where_type do
       :and -> Ecto.Query.where(query, [{^binding, x}], ^value in field(x, ^field))
       :or -> Ecto.Query.or_where(query, [{^binding, x}], ^value in field(x, ^field))
     end
   end
 
-  defp do_where(query, binding, {field, :excludes, value, []}, where_type) do
+  defp do_where(query, binding, {field, :exclude, value, []}, where_type) do
     case where_type do
       :and -> Ecto.Query.where(query, [{^binding, x}], ^value not in field(x, ^field))
       :or -> Ecto.Query.or_where(query, [{^binding, x}], ^value not in field(x, ^field))
