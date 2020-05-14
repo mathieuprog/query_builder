@@ -6,6 +6,7 @@ defmodule QueryBuilder.Article do
 
   schema "articles" do
     field(:title, :string)
+    field(:tags, {:array, :string})
 
     belongs_to(:author, QueryBuilder.User, foreign_key: :author_id)
     belongs_to(:publisher, QueryBuilder.User, foreign_key: :publisher_id)

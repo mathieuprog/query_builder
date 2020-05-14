@@ -46,6 +46,7 @@ defmodule QueryBuilder.CreateTables do
 
     create table(:articles) do
       add(:title, :string)
+      add(:tags, {:array, :string})
       add(:author_id, references(:users))
       add(:publisher_id, references(:users))
       add(:category_id, references(:categories))

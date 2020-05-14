@@ -145,6 +145,12 @@ Supported filter operations are:
 * `:ends_with`
 * `:contains`
 
+Array inclusion checking:
+* `:in`
+* `:not_in`
+* `:include`
+* `:exclude`
+
 Note that `:starts_with`, `:ends_with` and `:contains` operations can be written using `:like`, but offer a more declarative style and are safer, as they escape the `%` and `_` characters for you. You may also perform case insensitive searchs using these functions. Example:
 
 ```elixir

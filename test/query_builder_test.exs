@@ -1,8 +1,7 @@
 defmodule QueryBuilderTest do
   use ExUnit.Case
   import QueryBuilder.Factory
-  alias QueryBuilder.Repo
-  alias QueryBuilder.User
+  alias QueryBuilder.{Repo, User, Article}
   require Ecto.Query
 
   doctest QueryBuilder
@@ -43,8 +42,8 @@ defmodule QueryBuilderTest do
     title3 = "ELIXIR V1.8 RELEASED"
 
     articles = [
-      insert(:article, %{title: title1, author: author1, publisher: publisher}),
-      insert(:article, %{title: title2, author: author1, publisher: publisher}),
+      insert(:article, %{title: title1, author: author1, publisher: publisher, tags: ["baz", "qux"]}),
+      insert(:article, %{title: title2, author: author1, publisher: publisher, tags: ["baz"]}),
       insert(:article, %{title: title3, author: author2, publisher: publisher})
     ]
 
@@ -168,6 +167,34 @@ defmodule QueryBuilderTest do
       |> Repo.all()
 
     assert 1 == length(users_containing_ri)
+
+    users_in_list =
+      User
+      |> QueryBuilder.where({:name, :in, ["Alice", "Bob"]})
+      |> Repo.all()
+
+    assert 2 == length(users_in_list)
+
+    users_not_in_list =
+      User
+      |> QueryBuilder.where({:name, :not_in, ["Alice", "Bob"]})
+      |> Repo.all()
+
+    assert 6 == length(users_not_in_list)
+
+    articles_including_tags =
+      Article
+      |> QueryBuilder.where({:tags, :include, "baz"})
+      |> Repo.all()
+
+    assert 2 == length(articles_including_tags)
+
+    articles_excluding_tags =
+      Article
+      |> QueryBuilder.where({:tags, :exclude, "baz"})
+      |> Repo.all()
+
+    assert 1 == length(articles_excluding_tags)
   end
 
   test "where comparing two fields" do
@@ -326,7 +353,8 @@ defmodule QueryBuilderTest do
       User
       |> QueryBuilder.from_list(
         where: [{:email, :equal_to, "alice@example.com"}],
-        where: [name: "Alice"],
+        where: [name: "Alice", nickname: "Alice"],
+        where: {[role: :permissions], name@permissions: "write"},
         order_by: {:authored_articles, title@authored_articles: :asc},
         preload: :authored_articles
       )

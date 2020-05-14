@@ -47,6 +47,34 @@ defmodule QueryBuilder.Query.Where do
     do_where(query, binding, {field, operator, value, operator_opts}, where_type)
   end
 
+  defp do_where(query, binding, {field, :in, values, []}, where_type) when is_list(values) do
+    case where_type do
+      :and -> Ecto.Query.where(query, [{^binding, x}], field(x, ^field) in ^values)
+      :or -> Ecto.Query.or_where(query, [{^binding, x}], field(x, ^field) in ^values)
+    end
+  end
+
+  defp do_where(query, binding, {field, :not_in, values, []}, where_type) when is_list(values) do
+    case where_type do
+      :and -> Ecto.Query.where(query, [{^binding, x}], field(x, ^field) not in ^values)
+      :or -> Ecto.Query.or_where(query, [{^binding, x}], field(x, ^field) not in ^values)
+    end
+  end
+
+  defp do_where(query, binding, {field, :includes, value, []}, where_type) do
+    case where_type do
+      :and -> Ecto.Query.where(query, [{^binding, x}], ^value in field(x, ^field))
+      :or -> Ecto.Query.or_where(query, [{^binding, x}], ^value in field(x, ^field))
+    end
+  end
+
+  defp do_where(query, binding, {field, :excludes, value, []}, where_type) do
+    case where_type do
+      :and -> Ecto.Query.where(query, [{^binding, x}], ^value not in field(x, ^field))
+      :or -> Ecto.Query.or_where(query, [{^binding, x}], ^value not in field(x, ^field))
+    end
+  end
+
   defp do_where(query, binding, {field, operator, value, []}, where_type) when operator in [:eq, :equal_to] do
     case where_type do
       :and -> Ecto.Query.where(query, [{^binding, x}], field(x, ^field) == ^value)

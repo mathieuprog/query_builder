@@ -28,6 +28,7 @@ defmodule QueryBuilder.Factory do
 
     %QueryBuilder.Article{
       title: title,
+      tags: ["foo", "bar"],
       author: build(:user),
       publisher: build(:user)
     }
