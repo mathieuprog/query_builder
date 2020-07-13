@@ -236,7 +236,7 @@ Add `query_builder` for Elixir as a dependency in your `mix.exs` file:
 ```elixir
 def deps do
   [
-    {:query_builder, "~> 0.14.0"}
+    {:query_builder, "~> 0.15.0"}
   ]
 end
 ```
