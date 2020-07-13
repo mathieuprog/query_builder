@@ -212,6 +212,13 @@ defmodule QueryBuilderTest do
       |> Repo.all()
 
     assert 3 == length(result)
+
+    result =
+      User
+      |> QueryBuilder.where(:role, [name@role: "author"], or: [name@role: "publisher"])
+      |> Repo.all()
+
+    assert 3 == length(result)
   end
 
   test "where multiple conditions" do
