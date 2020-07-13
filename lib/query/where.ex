@@ -75,9 +75,6 @@ defmodule QueryBuilder.Query.Where do
   end
 
   defp do_where(query, binding, {field, operator, nil, []}, where_type) when operator in [:eq, :equal_to] do
-    IO.inspect "A"
-    IO.inspect nil
-
     case where_type do
       :and -> Ecto.Query.where(query, [{^binding, x}], is_nil(field(x, ^field)))
       :or -> Ecto.Query.or_where(query, [{^binding, x}], is_nil(field(x, ^field)))
@@ -85,9 +82,6 @@ defmodule QueryBuilder.Query.Where do
   end
 
   defp do_where(query, binding, {field, operator, value, []}, where_type) when operator in [:eq, :equal_to] do
-    IO.inspect "B"
-    IO.inspect value
-
     case where_type do
       :and -> Ecto.Query.where(query, [{^binding, x}], field(x, ^field) == ^value)
       :or -> Ecto.Query.or_where(query, [{^binding, x}], field(x, ^field) == ^value)
