@@ -62,6 +62,24 @@ defmodule QueryBuilder do
   end
 
   @doc ~S"""
+  Run `QueryBuilder.where/2` only if given condition is met.
+  """
+  def maybe_where(query, true, filters) do
+    where(query, [], filters)
+  end
+
+  def maybe_where(query, false, _), do: query
+
+  @doc ~S"""
+  Run `QueryBuilder.where/4` only if given condition is met.
+  """
+  def maybe_where(query, true, assoc_fields, filters, opts \\ []) do
+    where(query, assoc_fields, filters, opts)
+  end
+
+  def maybe_where(query, false, _, _, _), do: query
+
+  @doc ~S"""
   An order by query expression.
 
   Example:

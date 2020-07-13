@@ -154,8 +154,17 @@ When using `:like` or `:ilike`, make sure to escape `%` and `_` characters prope
 You may also add `OR` clauses through `QueryBuilder.where/4`'s fourth argument:
 
 ```elixir
-QueryBuilder.where(query, [], [firstname: "John"], or: [firstname: "Alice", lastname: "Doe"], or: [firstname: "Bob"])
+QueryBuilder.where(query, [], [name: "John"], or: [name: "Alice", age: 42], or: [name: "Bob"])
 ```
+
+`QueryBuilder.maybe_where/3` and `QueryBuilder.maybe_where/5`
+
+```elixir
+query
+|> QueryBuilder.maybe_where(some_condition, name: "Alice")
+```
+
+The above will run `where/2` if the given condition is met.
 
 `QueryBuilder.order_by/2`
 
