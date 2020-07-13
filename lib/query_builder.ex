@@ -50,7 +50,7 @@ defmodule QueryBuilder do
   QueryBuilder.where(query, [role: :permissions], name@permissions: :write)
   ```
   """
-  def where(query, assoc_fields, filters) do
+  def where(query, assoc_fields, filters, _opts \\ []) do
     ensure_query_has_binding(query)
     |> QueryBuilder.Query.Where.where(assoc_fields, filters)
   end

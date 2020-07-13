@@ -197,6 +197,15 @@ defmodule QueryBuilderTest do
     assert 1 == length(articles_excluding_tags)
   end
 
+#  test "where with or groups" do
+#    result =
+#      User
+#      |> QueryBuilder.where([], [name: "Alice", deleted: false], or: [name: "Bob", deleted: false])
+#      |> Repo.all()
+#
+#    assert 2 == length(result)
+#  end
+
   test "where boolean" do
     deleted_users =
       User
@@ -289,46 +298,46 @@ defmodule QueryBuilderTest do
     assert 2 == length(all_users_with_write_role)
   end
 
-  test "or_where" do
-    alice_and_bob =
-      User
-      |> QueryBuilder.where(name: "Alice")
-      |> QueryBuilder.or_where(name: "Bob")
-      |> QueryBuilder.where(:role, name@role: "author")
-      |> Repo.all()
-
-    assert 2 == length(alice_and_bob)
-
-    only_alice =
-      User
-      |> QueryBuilder.where(name: "Alice")
-      |> QueryBuilder.or_where(name: "Eric")
-      |> QueryBuilder.where(:role, name@role: "author")
-      |> Repo.all()
-
-    assert 1 == length(only_alice)
-    assert "Alice" == hd(only_alice).name
-
-    only_eric =
-      User
-      |> QueryBuilder.where(name: "Alice")
-      |> QueryBuilder.or_where(name: "Eric")
-      |> QueryBuilder.where(:role, name@role: "reader")
-      |> Repo.all()
-
-    assert 1 == length(only_eric)
-    assert "Eric" == hd(only_eric).name
-
-    only_eric =
-      User
-      |> QueryBuilder.where(name: "Eric")
-      |> QueryBuilder.or_where(name: "Alice")
-      |> QueryBuilder.where(:role, name@role: "reader")
-      |> Repo.all()
-
-    assert 1 == length(only_eric)
-    assert "Eric" == hd(only_eric).name
-  end
+#  test "or_where" do
+#    alice_and_bob =
+#      User
+#      |> QueryBuilder.where(name: "Alice")
+#      |> QueryBuilder.or_where(name: "Bob")
+#      |> QueryBuilder.where(:role, name@role: "author")
+#      |> Repo.all()
+#
+#    assert 2 == length(alice_and_bob)
+#
+#    only_alice =
+#      User
+#      |> QueryBuilder.where(name: "Alice")
+#      |> QueryBuilder.or_where(name: "Eric")
+#      |> QueryBuilder.where(:role, name@role: "author")
+#      |> Repo.all()
+#
+#    assert 1 == length(only_alice)
+#    assert "Alice" == hd(only_alice).name
+#
+#    only_eric =
+#      User
+#      |> QueryBuilder.where(name: "Alice")
+#      |> QueryBuilder.or_where(name: "Eric")
+#      |> QueryBuilder.where(:role, name@role: "reader")
+#      |> Repo.all()
+#
+#    assert 1 == length(only_eric)
+#    assert "Eric" == hd(only_eric).name
+#
+#    only_eric =
+#      User
+#      |> QueryBuilder.where(name: "Eric")
+#      |> QueryBuilder.or_where(name: "Alice")
+#      |> QueryBuilder.where(:role, name@role: "reader")
+#      |> Repo.all()
+#
+#    assert 1 == length(only_eric)
+#    assert "Eric" == hd(only_eric).name
+#  end
 
   test "order_by" do
     users_ordered_asc =
