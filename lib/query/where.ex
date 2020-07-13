@@ -4,14 +4,29 @@ defmodule QueryBuilder.Query.Where do
   require Ecto.Query
   import QueryBuilder.Utils
 
-  def where(query, assoc_fields, filters) do
+  def where(query, assoc_fields, filters, opts \\ []) do
     token = QueryBuilder.Token.token(query, assoc_fields)
 
     {query, token} = QueryBuilder.JoinMaker.make_joins(query, token)
 
-    dynamic_query =
-      apply_filters(query, token, List.wrap(filters))
-      |> Enum.reduce(&Ecto.Query.dynamic(^&1 and ^&2))
+    filters_list = [filters | Keyword.get_values(opts, :or)]
+
+    dynamic_query_list =
+      Enum.map(filters_list, fn filters ->
+        apply_filters(query, token, List.wrap(filters))
+        |> Enum.reduce(&Ecto.Query.dynamic(^&1 and ^&2))
+      end)
+
+    [dynamic_query | _] = dynamic_query_list
+
+#    dynamic_query =
+#      Enum.reduce(filters_list, query, fn filters, accumulated_dynamic_query ->
+#        dynamic_query =
+#          apply_filters(query, token, List.wrap(filters))
+#          |> Enum.reduce(&Ecto.Query.dynamic(^&1 and ^&2))
+#
+#        Ecto.Query.dynamic(^accumulated_dynamic_query or ^dynamic_query)
+#      end)
 
     Ecto.Query.where(query, ^dynamic_query)
   end
