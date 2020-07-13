@@ -109,7 +109,7 @@ Currently, supported operations are:
 QueryBuilder.where(query, firstname: "John")
 ```
 
-`QueryBuilder.where/3`
+`QueryBuilder.where/4`
 
 ```elixir
 QueryBuilder.where(query, [role: :permissions], name@permissions: :write)
@@ -150,6 +150,12 @@ QueryBuilder.where({:name, :starts_with, "jo", case: :insensitive}) # `:i` will 
 ```
 
 When using `:like` or `:ilike`, make sure to escape `%` and `_` characters properly.
+
+You may also add `OR` clauses through `QueryBuilder.where/4`'s fourth argument:
+
+```elixir
+QueryBuilder.where(query, [], [firstname: "John"], or: [firstname: "Alice", lastname: "Doe"], or: [firstname: "Bob"])
+```
 
 `QueryBuilder.order_by/2`
 
