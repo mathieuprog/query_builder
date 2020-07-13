@@ -28,7 +28,7 @@ defmodule QueryBuilderTest do
 
     author1 = insert(:user, %{name: "Alice", email: "alice@example.com", role: role_author, nickname: "Alice"})
     author2 = insert(:user, %{name: "Bob", email: "the_bob@example.com", role: role_author, nickname: "Bobby"})
-    reader = insert(:user, %{name: "Eric", email: "eric@example.com", role: role_reader, nickname: "Eric"})
+    reader = insert(:user, %{name: "Eric", email: nil, role: role_reader, nickname: "Eric", deleted: true})
     insert(:user, %{name: "Dave", email: "dave@example.com", role: role_admin, nickname: "Dave"})
     insert(:user, %{name: "Richard", email: "richard@example.com", role: role_admin, nickname: "Rich"})
     insert(:user, %{name: "An% we_ird %name_%", email: "weirdo@example.com", role: role_reader, nickname: "John"})
@@ -197,6 +197,59 @@ defmodule QueryBuilderTest do
     assert 1 == length(articles_excluding_tags)
   end
 
+  test "where boolean" do
+    deleted_users =
+      User
+      |> QueryBuilder.where({:deleted, :eq, true})
+      |> Repo.all()
+
+    assert 1 == length(deleted_users)
+
+    not_deleted_users =
+      User
+      |> QueryBuilder.where({:deleted, :ne, true})
+      |> Repo.all()
+
+    assert 7 == length(not_deleted_users)
+
+    not_deleted_users =
+      User
+      |> QueryBuilder.where({:deleted, :eq, false})
+      |> Repo.all()
+
+    assert 7 == length(not_deleted_users)
+
+    not_deleted_users =
+      User
+      |> QueryBuilder.where(deleted: false)
+      |> Repo.all()
+
+    assert 7 == length(not_deleted_users)
+  end
+
+  test "where is (not) null" do
+    users_without_email =
+      User
+      |> QueryBuilder.where({:email, :eq, nil})
+      |> Repo.all()
+
+    assert 1 == length(users_without_email)
+
+    users_with_email =
+      User
+      |> QueryBuilder.where({:email, :ne, nil})
+      |> Repo.all()
+
+    assert 7 == length(users_with_email)
+
+    users_without_email =
+      User
+      |> QueryBuilder.where(email: nil)
+      |> Repo.all()
+
+    assert 1 == length(users_without_email)
+  end
+
   test "where comparing two fields" do
     users_where_name_matches_nickname =
       User
@@ -210,14 +263,14 @@ defmodule QueryBuilderTest do
       |> QueryBuilder.where({:email, :contains, :name, case: :insensitive})
       |> Repo.all()
 
-    assert 6 == length(users_where_name_included_in_email)
+    assert 5 == length(users_where_name_included_in_email)
 
     users_where_name_included_in_email =
       User
       |> QueryBuilder.where({:email, :starts_with, :name, case: :insensitive})
       |> Repo.all()
 
-    assert 5 == length(users_where_name_included_in_email)
+    assert 4 == length(users_where_name_included_in_email)
   end
 
   test "where with assocs" do

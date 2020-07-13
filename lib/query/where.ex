@@ -28,10 +28,9 @@ defmodule QueryBuilder.Query.Where do
   end
 
   defp apply_filter(query, token, {field1, operator, field2, operator_opts}, where_type)
-       when is_atom(field2) do
+       when is_atom(field2) and field2 not in [nil, false, true] do
     {field1, binding_field1} = find_field_and_binding_from_token(query, token, field1)
     {field2, binding_field2} = find_field_and_binding_from_token(query, token, field2)
-
     do_where(
       query,
       binding_field1,
@@ -75,10 +74,30 @@ defmodule QueryBuilder.Query.Where do
     end
   end
 
+  defp do_where(query, binding, {field, operator, nil, []}, where_type) when operator in [:eq, :equal_to] do
+    IO.inspect "A"
+    IO.inspect nil
+
+    case where_type do
+      :and -> Ecto.Query.where(query, [{^binding, x}], is_nil(field(x, ^field)))
+      :or -> Ecto.Query.or_where(query, [{^binding, x}], is_nil(field(x, ^field)))
+    end
+  end
+
   defp do_where(query, binding, {field, operator, value, []}, where_type) when operator in [:eq, :equal_to] do
+    IO.inspect "B"
+    IO.inspect value
+
     case where_type do
       :and -> Ecto.Query.where(query, [{^binding, x}], field(x, ^field) == ^value)
       :or -> Ecto.Query.or_where(query, [{^binding, x}], field(x, ^field) == ^value)
+    end
+  end
+
+  defp do_where(query, binding, {field, operator, nil, []}, where_type) when operator in [:ne, :other_than] do
+    case where_type do
+      :and -> Ecto.Query.where(query, [{^binding, x}], not is_nil(field(x, ^field)))
+      :or -> Ecto.Query.or_where(query, [{^binding, x}], not is_nil(field(x, ^field)))
     end
   end
 

@@ -18,6 +18,7 @@ defmodule QueryBuilder.Factory do
     %QueryBuilder.User{
       name: "Jane Smith",
       nickname: "Jane",
+      deleted: false,
       email: sequence(:email, &"email-#{&1}@example.com"),
       role: build(:role)
     }

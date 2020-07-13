@@ -1,6 +1,6 @@
 use Mix.Config
 
-config :logger, level: :warn
+config :logger, level: :warn # set to :debug to view SQL queries in logs
 
 config :query_builder,
   ecto_repos: [QueryBuilder.Repo]

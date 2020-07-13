@@ -19,6 +19,7 @@ defmodule QueryBuilder.CreateTables do
       add(:name, :string)
       add(:email, :string)
       add(:nickname, :string)
+      add(:deleted, :boolean)
       add(:role_id, references(:roles))
 
       timestamps()
