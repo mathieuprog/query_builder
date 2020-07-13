@@ -206,6 +206,15 @@ defmodule QueryBuilderTest do
 #    assert 2 == length(result)
 #  end
 
+  test "where multiple conditions" do
+    alice =
+      User
+      |> QueryBuilder.where(deleted: false, name: "Alice")
+      |> Repo.all()
+
+    assert 1 == length(alice)
+  end
+
   test "where boolean" do
     deleted_users =
       User
