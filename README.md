@@ -115,19 +115,7 @@ QueryBuilder.where(query, firstname: "John")
 QueryBuilder.where(query, [role: :permissions], name@permissions: :write)
 ```
 
-`QueryBuilder.or_where/2`
-
-```elixir
-QueryBuilder.or_where(query, firstname: "John")
-```
-
-`QueryBuilder.or_where/3`
-
-```elixir
-QueryBuilder.or_where(query, :role, name@role: "author")
-```
-
-Above `where`/`or_where` functions support different filter operations, for instance:
+Above `where` functions support different filter operations, for instance:
 ```elixir
 QueryBuilder.where(query, {:age, :greater_than, 18})
 ```
