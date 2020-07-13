@@ -49,6 +49,12 @@ defmodule QueryBuilder do
   ```
   QueryBuilder.where(query, [role: :permissions], name@permissions: :write)
   ```
+
+  OR clauses may be passed through last argument `opts`. For example:
+
+  ```elixir
+  QueryBuilder.where(query, [], [firstname: "John"], or: [firstname: "Alice", lastname: "Doe"], or: [firstname: "Bob"])
+  ```
   """
   def where(query, assoc_fields, filters, opts \\ []) do
     ensure_query_has_binding(query)
