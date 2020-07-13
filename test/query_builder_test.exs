@@ -197,14 +197,22 @@ defmodule QueryBuilderTest do
     assert 1 == length(articles_excluding_tags)
   end
 
-#  test "where with or groups" do
-#    result =
-#      User
-#      |> QueryBuilder.where([], [name: "Alice", deleted: false], or: [name: "Bob", deleted: false])
-#      |> Repo.all()
-#
-#    assert 2 == length(result)
-#  end
+  test "where with or groups" do
+    result =
+      User
+      |> QueryBuilder.where([], [name: "Alice", deleted: false], or: [name: "Bob", deleted: false])
+      |> Repo.all()
+
+    assert 2 == length(result)
+
+    result =
+      User
+      |> QueryBuilder.where(deleted: false)
+      |> QueryBuilder.where([], [name: "Alice"], or: [name: "Bob"], or: [name: "Eric"], or: [name: "Dave"])
+      |> Repo.all()
+
+    assert 3 == length(result)
+  end
 
   test "where multiple conditions" do
     alice =
