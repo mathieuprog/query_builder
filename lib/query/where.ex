@@ -52,6 +52,10 @@ defmodule QueryBuilder.Query.Where do
     do_where(binding, {field, operator, value, operator_opts})
   end
 
+  defp apply_filter(query, token, custom_fun) when is_function(custom_fun) do
+    custom_fun.(&(find_field_and_binding_from_token(query, token, &1)))
+  end
+
   defp do_where(binding, {field, :in, values, []}) when is_list(values) do
     Ecto.Query.dynamic([{^binding, x}], field(x, ^field) in ^values)
   end

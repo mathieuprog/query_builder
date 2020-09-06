@@ -230,6 +230,20 @@ defmodule QueryBuilderTest do
     assert 1 == length(alice)
   end
 
+  test "where with fragment" do
+    text_equals_condition = fn (field, value, get_binding_fun) ->
+      {field, binding} = get_binding_fun.(field)
+      Ecto.Query.dynamic([{^binding, x}], fragment("initcap(?)", ^value) == field(x, ^field))
+    end
+
+    alice =
+      User
+      |> QueryBuilder.where(&text_equals_condition.(:name, "alice", &1))
+      |> Repo.all()
+
+    assert 1 == length(alice)
+  end
+
   test "maybe where" do
     maybe_bob =
       User
