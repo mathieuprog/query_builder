@@ -13,14 +13,14 @@ defmodule QueryBuilder.Utils do
     field = String.to_existing_atom(field)
     assoc_field = String.to_existing_atom(assoc_field || "nil")
 
-    _find_field_and_binding_from_token(query, token, [field, assoc_field])
+    do_find_field_and_binding_from_token(query, token, [field, assoc_field])
   end
 
-  defp _find_field_and_binding_from_token(query, _token, [field, nil]) do
+  defp do_find_field_and_binding_from_token(query, _token, [field, nil]) do
     {field, QueryBuilder.Utils.root_schema(query)}
   end
 
-  defp _find_field_and_binding_from_token(_query, token, [field, assoc_field]) do
+  defp do_find_field_and_binding_from_token(_query, token, [field, assoc_field]) do
     {:ok, binding} = find_binding_from_token(token, assoc_field)
     {field, binding}
   end
@@ -31,8 +31,12 @@ defmodule QueryBuilder.Utils do
     if field == Map.fetch!(assoc_data, :assoc_field) do
       {:ok, assoc_data.assoc_binding}
     else
-      find_binding_from_token(assoc_data.nested_assocs, field) ||
-        find_binding_from_token(tail, field)
+      with {:ok, binding} <- find_binding_from_token(assoc_data.nested_assocs, field) do
+        {:ok, binding}
+      else
+        {:error, :not_found} ->
+          find_binding_from_token(tail, field)
+      end
     end
   end
 end
