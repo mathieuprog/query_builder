@@ -54,14 +54,9 @@ defmodule QueryBuilder.Schema do
               as: unquote(binding)
             )
           end
-        end
-      end,
-      for assoc_field <- assoc_fields do
-        binding = String.to_atom("#{__CALLER__.module}__#{assoc_field}")
 
-        quote do
           def _binding(unquote(assoc_field)),
-            do: unquote(binding)
+              do: unquote(binding)
         end
       end,
       quote do
