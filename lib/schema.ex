@@ -40,8 +40,6 @@ defmodule QueryBuilder.Schema do
         def _query(), do: Ecto.Query.from(x in __MODULE__, as: unquote(__CALLER__.module))
 
         def _binding(), do: __MODULE__
-
-        Module.register_attribute(__MODULE__, :assoc_fields, accumulate: true)
       end,
       for assoc_field <- assoc_fields do
         binding = String.to_atom("#{__CALLER__.module}__#{assoc_field}")
