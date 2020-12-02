@@ -30,11 +30,15 @@ defmodule QueryBuilder.Schema do
   # the source schema.
 
   defmacro __using__(opts) do
+    this_module = __MODULE__
     assoc_fields = Keyword.get(opts, :assoc_fields, [])
 
     [
       quote do
         require Ecto.Query
+
+        Module.register_attribute(__MODULE__, :bindings, accumulate: true)
+        @before_compile unquote(this_module)
 
         # assign a named binding (the schema's module name) to the schema of the root query
         def _query(), do: Ecto.Query.from(x in __MODULE__, as: unquote(__CALLER__.module))
@@ -45,6 +49,8 @@ defmodule QueryBuilder.Schema do
         binding = String.to_atom("#{__CALLER__.module}__#{assoc_field}")
 
         quote do
+          Module.put_attribute(__MODULE__, :bindings, unquote(binding))
+
           def _join(query, type, source_binding, unquote(assoc_field)) do
             Ecto.Query.join(
               query,
@@ -70,5 +76,11 @@ defmodule QueryBuilder.Schema do
         end
       end
     ]
+  end
+
+  defmacro __before_compile__(_env) do
+    quote do
+      def _bindings(), do: @bindings
+    end
   end
 end
