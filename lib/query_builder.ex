@@ -70,10 +70,12 @@ defmodule QueryBuilder do
 
   def maybe_where(query, false, _), do: query
 
+  def maybe_where(query, condition, assoc_fields, filters, opts \\ [])
+
   @doc ~S"""
   Run `QueryBuilder.where/4` only if given condition is met.
   """
-  def maybe_where(query, true, assoc_fields, filters, opts \\ []) do
+  def maybe_where(query, true, assoc_fields, filters, opts) do
     where(query, assoc_fields, filters, opts)
   end
 

@@ -50,7 +50,7 @@ defmodule QueryBuilder.Query.Preload do
 
     # Secondly, give `Ecto.Query.preload/3` the list of associations that have not
     # been joined, such as:
-    # `Ecto.Query.preload.(query, [articles: [comments: :comment_likes]])`
+    # `Ecto.Query.preload(query, [articles: [comments: :comment_likes]])`
     query =
       flattened_assoc_data
       |> Enum.map(fn assoc_data_list ->
