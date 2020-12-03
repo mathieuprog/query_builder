@@ -21,6 +21,10 @@ defmodule QueryBuilder do
   QueryBuilder.preload(query, [role: :permissions, articles: [:stars, comments: :user]])
   ```
   """
+  def preload(%QueryBuilder.Query{} = query, assoc_fields) do
+    QueryBuilder.Query.Preload.preload(query, assoc_fields)
+  end
+
   def preload(query, assoc_fields) do
     ensure_query_has_binding(query)
     |> QueryBuilder.Query.Preload.preload(assoc_fields)
@@ -56,7 +60,13 @@ defmodule QueryBuilder do
   QueryBuilder.where(query, [], [firstname: "John"], or: [firstname: "Alice", lastname: "Doe"], or: [firstname: "Bob"])
   ```
   """
-  def where(query, assoc_fields, filters, opts \\ []) do
+  def where(query, assoc_fields, filters, opts \\ [])
+
+  def where(%QueryBuilder.Query{} = query, assoc_fields, filters, opts) do
+    QueryBuilder.Query.Where.where(query, assoc_fields, filters, opts)
+  end
+
+  def where(query, assoc_fields, filters, opts) do
     ensure_query_has_binding(query)
     |> QueryBuilder.Query.Where.where(assoc_fields, filters, opts)
   end
@@ -103,6 +113,10 @@ defmodule QueryBuilder do
   QueryBuilder.order_by(query, :articles, title@articles: :asc)
   ```
   """
+  def order_by(%QueryBuilder.Query{} = query, assoc_fields, value) do
+    QueryBuilder.Query.OrderBy.order_by(query, assoc_fields, value)
+  end
+
   def order_by(query, assoc_fields, value) do
     ensure_query_has_binding(query)
     |> QueryBuilder.Query.OrderBy.order_by(assoc_fields, value)
@@ -119,6 +133,10 @@ defmodule QueryBuilder do
   QueryBuilder.join(query, :articles, :left)
   ```
   """
+  def join(%QueryBuilder.Query{} = query, assoc_fields, type) do
+    QueryBuilder.Query.Join.join(query, assoc_fields, type)
+  end
+
   def join(query, assoc_fields, type) do
     ensure_query_has_binding(query)
     |> QueryBuilder.Query.Join.join(assoc_fields, type)

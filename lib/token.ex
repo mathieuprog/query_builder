@@ -51,7 +51,11 @@ defmodule QueryBuilder.Token do
   This information allows the exposed functions such as `QueryBuilder.where/3` to join
   associations, refer to associations, etc.
   """
-  def token(query, value) do
+  def token(query, nil, value) do
+    token(query, %{list_assoc_data: [], preload: []}, value)
+  end
+
+  def token(query, token, value) do
     source_schema = QueryBuilder.Utils.root_schema(query)
 
     state = %State{
@@ -61,13 +65,41 @@ defmodule QueryBuilder.Token do
       bindings: [source_schema]
     }
 
-    token([], query, List.wrap(value), state)
+    list_assoc_data =
+      token.list_assoc_data
+      |> token(query, List.wrap(value), state)
+      |> merge_assoc_data_in_token()
+
+    %{
+      list_assoc_data: list_assoc_data,
+      preload: token.preload
+    }
+  end
+
+  defp merge_assoc_data_in_token(list_assoc_data) do
+    Enum.reduce(list_assoc_data, [], fn assoc_data, new_list_assoc_data ->
+      acc_assoc_data_with_index =
+        new_list_assoc_data
+        |> Enum.with_index()
+        |> Enum.find(fn {acc_assoc_data, _index} -> acc_assoc_data.assoc_binding == assoc_data.assoc_binding end)
+
+      if acc_assoc_data_with_index do
+        {acc_assoc_data, index} = acc_assoc_data_with_index
+
+        nested_assocs = merge_assoc_data_in_token(acc_assoc_data.nested_assocs ++ assoc_data.nested_assocs)
+
+        List.replace_at(new_list_assoc_data, index, Map.put(acc_assoc_data, :nested_assocs, nested_assocs))
+      else
+        [assoc_data | new_list_assoc_data]
+      end
+    end)
   end
 
   defp token(token, _, [], _), do: token
 
   defp token(token, query, [assoc_field | tail], state)
        when is_atom(assoc_field) do
+
     %{
       source_binding: source_binding,
       source_schema: source_schema,

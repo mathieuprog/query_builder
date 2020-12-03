@@ -11,13 +11,15 @@ defmodule QueryBuilder.JoinMaker do
   in the result set of the query, rather than emitting a new DB query.
   * `:type`: see `Ecto.Query.join/5`'s qualifier argument for possible values.
   """
-  def make_joins(query, token, options \\ []) do
-    _make_joins(query, token, bindings(token), options, [])
+  def make_joins(query, %{list_assoc_data: list_assoc_data} = token, options \\ []) do
+    {query, list_assoc_data} = do_make_joins(query, list_assoc_data, bindings(list_assoc_data), options, [])
+
+    %QueryBuilder.Query{ecto_query: query, token: Map.put(token, :list_assoc_data, list_assoc_data)}
   end
 
-  defp _make_joins(query, [], _, _, new_token), do: {query, new_token}
+  defp do_make_joins(query, [], _, _, new_token), do: {query, new_token}
 
-  defp _make_joins(query, [assoc_data | tail], bindings, options, new_token) do
+  defp do_make_joins(query, [assoc_data | tail], bindings, options, new_token) do
     mode = Keyword.get(options, :mode)
     type = Keyword.get(options, :type, :inner)
 
@@ -25,14 +27,14 @@ defmodule QueryBuilder.JoinMaker do
 
     {query, nested_assocs} =
       if assoc_data.has_joined do
-        _make_joins(query, assoc_data.nested_assocs, bindings, options, [])
+        do_make_joins(query, assoc_data.nested_assocs, bindings, options, [])
       else
         {query, assoc_data.nested_assocs}
       end
 
     assoc_data = %{assoc_data | nested_assocs: nested_assocs}
 
-    {query, new_token} = _make_joins(query, tail, bindings, options, new_token)
+    {query, new_token} = do_make_joins(query, tail, bindings, options, new_token)
 
     {query, [assoc_data | new_token]}
   end

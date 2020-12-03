@@ -3,17 +3,31 @@ defmodule QueryBuilder.Query.Preload do
 
   require Ecto.Query
 
-  def preload(query, value) do
-    token = QueryBuilder.Token.token(query, value)
+  def preload(%QueryBuilder.Query{ecto_query: query, token: token}, assoc_fields) do
+    %QueryBuilder.Query{
+      ecto_query: query,
+      token: Map.update(token, :preload, assoc_fields, &(&1 ++ assoc_fields))
+    }
+  end
+
+  def preload(query, assoc_fields) do
+    %QueryBuilder.Query{
+      ecto_query: query,
+      token: %{list_assoc_data: [], preload: []}
+    }
+    |> preload(assoc_fields)
+  end
+
+  def do_preload(query, _token, []), do: query
+
+  def do_preload(query, token, assoc_fields) do
+    token = QueryBuilder.Token.token(query, token, assoc_fields)
 
     # Join one-to-one associations as it is more advantageous to include those into
     # the result set rather than emitting a new DB query.
-    {query, token} = QueryBuilder.JoinMaker.make_joins(query, token, mode: :if_preferable)
+    %QueryBuilder.Query{ecto_query: query, token: token} =
+      QueryBuilder.JoinMaker.make_joins(query, token, mode: :if_preferable)
 
-    do_preload(query, token)
-  end
-
-  defp do_preload(query, token) do
     flattened_assoc_data = flatten_assoc_data(token)
 
     # Firstly, give `Ecto.Query.preload/3` the list of associations that have been
@@ -69,34 +83,34 @@ defmodule QueryBuilder.Query.Preload do
     query
   end
 
-  defp flatten_assoc_data(token) do
-    Enum.flat_map(token, &_flatten_assoc_data/1)
+  defp flatten_assoc_data(%{list_assoc_data: list_assoc_data}) do
+    Enum.flat_map(list_assoc_data, &do_flatten_assoc_data/1)
   end
 
-  defp _flatten_assoc_data(%{nested_assocs: []} = assoc_data) do
+  defp do_flatten_assoc_data(%{nested_assocs: []} = assoc_data) do
     [[Map.delete(assoc_data, :nested_assocs)]]
   end
 
-  defp _flatten_assoc_data(%{nested_assocs: nested_assocs} = assoc_data) do
+  defp do_flatten_assoc_data(%{nested_assocs: nested_assocs} = assoc_data) do
     for nested_assoc_data <- nested_assocs,
-        rest <- _flatten_assoc_data(nested_assoc_data) do
+        rest <- do_flatten_assoc_data(nested_assoc_data) do
       [Map.delete(assoc_data, :nested_assocs) | rest]
     end
   end
 
   defp convert_list_to_nested_keyword_list(list) do
-    _convert_list_to_nested_keyword_list(list)
+    do_convert_list_to_nested_keyword_list(list)
     |> List.wrap()
   end
 
-  defp _convert_list_to_nested_keyword_list([]), do: []
-  defp _convert_list_to_nested_keyword_list([e]), do: e
+  defp do_convert_list_to_nested_keyword_list([]), do: []
+  defp do_convert_list_to_nested_keyword_list([e]), do: e
 
-  defp _convert_list_to_nested_keyword_list([head | [penultimate, last]]),
+  defp do_convert_list_to_nested_keyword_list([head | [penultimate, last]]),
     do: [{head, [{penultimate, last}]}]
 
-  defp _convert_list_to_nested_keyword_list([head | tail]),
-    do: [{head, _convert_list_to_nested_keyword_list(tail)}]
+  defp do_convert_list_to_nested_keyword_list([head | tail]),
+    do: [{head, do_convert_list_to_nested_keyword_list(tail)}]
 
   defp do_preload_with_bindings(query, []), do: query
 

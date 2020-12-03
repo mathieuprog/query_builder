@@ -6,22 +6,22 @@ defmodule QueryBuilder.Utils do
     context
   end
 
-  def find_field_and_binding_from_token(query, token, field) do
+  def find_field_and_binding_from_token(query, %{list_assoc_data: list_assoc_data}, field) do
     split_field = String.split(to_string(field), "@")
     [field, assoc_field] = [Enum.at(split_field, 0), Enum.at(split_field, 1)]
 
     field = String.to_existing_atom(field)
     assoc_field = String.to_existing_atom(assoc_field || "nil")
 
-    do_find_field_and_binding_from_token(query, token, [field, assoc_field])
+    do_find_field_and_binding_from_token(query, list_assoc_data, [field, assoc_field])
   end
 
-  defp do_find_field_and_binding_from_token(query, _token, [field, nil]) do
+  defp do_find_field_and_binding_from_token(query, _list_assoc_data, [field, nil]) do
     {field, QueryBuilder.Utils.root_schema(query)}
   end
 
-  defp do_find_field_and_binding_from_token(_query, token, [field, assoc_field]) do
-    {:ok, binding} = find_binding_from_token(token, assoc_field)
+  defp do_find_field_and_binding_from_token(_query, list_assoc_data, [field, assoc_field]) do
+    {:ok, binding} = find_binding_from_token(list_assoc_data, assoc_field)
     {field, binding}
   end
 
