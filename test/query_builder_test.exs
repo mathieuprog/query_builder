@@ -401,24 +401,35 @@ defmodule QueryBuilderTest do
   end
 
   test "preload" do
+    query =
+      Ecto.Query.from(u in User, join: r in assoc(u, :role), join: a in assoc(u, :authored_articles))
+      |> Ecto.Query.where([u, r, a], a.title == ^"ELIXIR V1.9 RELEASED")
+      |> Ecto.Query.preload([u, r, a], [:published_articles, authored_articles: {a, [:article_likes, :article_stars, {:comments, [:comment_stars, comment_likes: :user]}]}])
+      |> Ecto.Query.preload([u, r, a], role: r)
+
     preload = [
-      {:authored_articles,
-       [
-         :article_likes,
-         :article_stars,
-         {:comments, [:comment_stars, comment_likes: :user]}
-       ]},
-      :published_articles
+      :role, :published_articles,
+      {
+        :authored_articles,
+        [
+          :article_likes,
+          :article_stars,
+          {:comments, [:comment_stars, comment_likes: :user]}
+        ]
+      }
     ]
 
-    query =
-      Ecto.Query.from(u in User, join: r in assoc(u, :role))
-      |> Ecto.Query.preload(^preload)
-      |> Ecto.Query.preload([u, r], role: r)
+    built_query =
+      User
+      |> QueryBuilder.where(:authored_articles, title@authored_articles: "ELIXIR V1.9 RELEASED")
+      |> QueryBuilder.preload(preload)
 
-    preload = [:role | preload]
+    assert %{changed: :equal} = MapDiff.diff(Repo.all(query), Repo.all(built_query))
 
-    built_query = QueryBuilder.preload(User, preload)
+    built_query =
+      User
+      |> QueryBuilder.preload(preload)
+      |> QueryBuilder.where(:authored_articles, title@authored_articles: "ELIXIR V1.9 RELEASED")
 
     assert %{changed: :equal} = MapDiff.diff(Repo.all(query), Repo.all(built_query))
   end
