@@ -398,6 +398,12 @@ defmodule QueryBuilderTest do
            |> QueryBuilder.join(:authored_articles, :left)
            |> QueryBuilder.where(:authored_articles, name: "Eric")
            |> Repo.one()
+
+    assert User
+           |> QueryBuilder.where(name: "Eric")
+           |> QueryBuilder.join(:authored_articles, :left)
+           |> QueryBuilder.where(:authored_articles, title@authored_articles: "ELIXIR V1.9 RELEASED")
+           |> Repo.one()
   end
 
   test "preload" do
