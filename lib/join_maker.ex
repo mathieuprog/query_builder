@@ -11,77 +11,76 @@ defmodule QueryBuilder.JoinMaker do
   in the result set of the query, rather than emitting a new DB query.
   * `:type`: see `Ecto.Query.join/5`'s qualifier argument for possible values.
   """
-  def make_joins(query, %{list_assoc_data: list_assoc_data} = token, options \\ []) do
-    {query, list_assoc_data} = do_make_joins(query, list_assoc_data, bindings(list_assoc_data), options, [])
-
-    %QueryBuilder.Query{ecto_query: query, token: Map.put(token, :list_assoc_data, list_assoc_data)}
+  def make_joins(ecto_query, assoc_list) do
+    do_make_joins(ecto_query, assoc_list, [], [])
+    # returns {ecto_query, new_assoc_list}
   end
 
-  defp do_make_joins(query, [], _, _, new_token), do: {query, new_token}
+  defp do_make_joins(ecto_query, [], _, new_assoc_list), do: {ecto_query, new_assoc_list}
 
-  defp do_make_joins(query, [assoc_data | tail], bindings, options, new_token) do
-    mode = Keyword.get(options, :mode)
-    type = Keyword.get(options, :type, :inner)
+  defp do_make_joins(ecto_query, [assoc_data | tail], bindings, new_assoc_list) do
+    {ecto_query, assoc_data, bindings} = maybe_join(ecto_query, assoc_data, bindings)
 
-    {query, assoc_data, bindings} = maybe_join(query, assoc_data, bindings, mode, type)
-
-    {query, nested_assocs} =
+    {ecto_query, nested_assocs} =
       if assoc_data.has_joined do
-        do_make_joins(query, assoc_data.nested_assocs, bindings, options, [])
+        do_make_joins(ecto_query, assoc_data.nested_assocs, bindings, [])
       else
-        {query, assoc_data.nested_assocs}
+        {ecto_query, assoc_data.nested_assocs}
       end
 
     assoc_data = %{assoc_data | nested_assocs: nested_assocs}
 
-    {query, new_token} = do_make_joins(query, tail, bindings, options, new_token)
+    {ecto_query, new_assoc_list} = do_make_joins(ecto_query, tail, bindings, new_assoc_list)
 
-    {query, [assoc_data | new_token]}
+    {ecto_query, [assoc_data | new_assoc_list]}
   end
 
-  defp maybe_join(query, %{has_joined: true} = assoc_data, bindings, _, _),
-    do: {query, assoc_data, bindings}
+#  defp maybe_join(ecto_query, %{has_joined: true} = assoc_data, bindings),
+#    do: {ecto_query, assoc_data, bindings}
 
-  defp maybe_join(query, %{cardinality: :many} = assoc_data, bindings, :if_preferable, _type),
-    do: {query, assoc_data, bindings}
+  defp maybe_join(ecto_query, %{cardinality: :many, join_type: :inner_if_cardinality_is_one} = assoc_data, bindings),
+    do: {ecto_query, assoc_data, bindings}
 
-  defp maybe_join(query, assoc_data, bindings, _mode, type) do
+  defp maybe_join(ecto_query, assoc_data, bindings) do
     %{
       source_binding: source_binding,
       source_schema: source_schema,
       assoc_binding: assoc_binding,
       assoc_field: assoc_field,
-      assoc_schema: assoc_schema
+      assoc_schema: assoc_schema,
+      join_type: join_type
     } = assoc_data
+
+    has_joined = Ecto.Query.has_named_binding?(ecto_query, assoc_binding)
+    if has_joined do
+      raise "has already joined"
+    end
+
+    join_type =
+      case join_type do
+        :left ->
+          :left
+
+        _ ->
+          :inner
+      end
 
     unless Enum.member?(bindings, assoc_binding) do
       # see schema.ex's module doc in order to understand what's going on here
-      query =
+      ecto_query =
         if String.contains?(to_string(assoc_binding), "__") do
-          source_schema._join(query, type, source_binding, assoc_field)
+          source_schema._join(ecto_query, join_type, source_binding, assoc_field)
         else
-          assoc_schema._join(query, type, source_binding, assoc_field)
+          assoc_schema._join(ecto_query, join_type, source_binding, assoc_field)
         end
 
       {
-        query,
+        ecto_query,
         %{assoc_data | has_joined: true},
         [assoc_binding | bindings]
       }
     else
-      {query, assoc_data, bindings}
-    end
-  end
-
-  defp bindings([]), do: []
-
-  defp bindings([assoc_data | tail]) do
-    list = bindings(assoc_data.nested_assocs) ++ bindings(tail)
-
-    if assoc_data.has_joined do
-      [assoc_data.assoc_binding | list]
-    else
-      list
+      {ecto_query, assoc_data, bindings}
     end
   end
 end

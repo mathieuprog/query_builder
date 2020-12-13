@@ -4,31 +4,19 @@ defmodule QueryBuilder.Query.OrderBy do
   require Ecto.Query
   import QueryBuilder.Utils
 
-  def order_by(%QueryBuilder.Query{ecto_query: ecto_query, token: token}, assoc_fields, value) do
-    token = QueryBuilder.Token.token(ecto_query, token, assoc_fields)
-
-    %QueryBuilder.Query{ecto_query: ecto_query, token: token} =
-      QueryBuilder.JoinMaker.make_joins(ecto_query, token)
-
-    %QueryBuilder.Query{
-      ecto_query: apply_order_values(ecto_query, token, List.wrap(value)),
-      token: token
-    }
+  def order_by(ecto_query, assoc_list, value) do
+    apply_order_values(ecto_query, assoc_list, List.wrap(value))
   end
 
-  def order_by(query, assoc_fields, value) do
-    order_by(%QueryBuilder.Query{ecto_query: query, token: nil}, assoc_fields, value)
+  defp apply_order_values(query, _assoc_list, []), do: query
+
+  defp apply_order_values(query, assoc_list, [order | tail]) do
+    query = apply_order(query, assoc_list, order)
+    apply_order_values(query, assoc_list, tail)
   end
 
-  defp apply_order_values(query, _token, []), do: query
-
-  defp apply_order_values(query, token, [order | tail]) do
-    query = apply_order(query, token, order)
-    apply_order_values(query, token, tail)
-  end
-
-  defp apply_order(query, token, {field, direction}) do
-    {field, binding} = find_field_and_binding_from_token(query, token, field)
+  defp apply_order(query, assoc_list, {field, direction}) do
+    {field, binding} = find_field_and_binding_from_token(query, assoc_list, field)
 
     Ecto.Query.order_by(query, [{^binding, x}], [{^direction, field(x, ^field)}])
   end

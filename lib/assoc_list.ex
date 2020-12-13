@@ -1,4 +1,4 @@
-defmodule QueryBuilder.Token do
+defmodule QueryBuilder.AssocList do
   @moduledoc false
 
   defmodule State do
@@ -51,13 +51,7 @@ defmodule QueryBuilder.Token do
   This information allows the exposed functions such as `QueryBuilder.where/3` to join
   associations, refer to associations, etc.
   """
-  def token(query, nil, value) do
-    token(query, %{list_assoc_data: [], preload: []}, value)
-  end
-
-  def token(query, token, value) do
-    source_schema = QueryBuilder.Utils.root_schema(query)
-
+  def build(source_schema, assoc_list, assoc_fields, opts \\ []) do
     state = %State{
       # the name of the binding of the query's root schema is the schema itself
       source_binding: source_schema,
@@ -65,103 +59,121 @@ defmodule QueryBuilder.Token do
       bindings: [source_schema]
     }
 
-    list_assoc_data =
-      token.list_assoc_data
-      |> token(query, List.wrap(value), state)
-      |> merge_assoc_data_in_token()
-
-    %{
-      list_assoc_data: list_assoc_data,
-      preload: token.preload
-    }
+    assoc_list
+    |> do_build(List.wrap(assoc_fields), state, opts)
+    |> merge_assoc_data()
   end
 
-  defp merge_assoc_data_in_token(list_assoc_data) do
-    Enum.reduce(list_assoc_data, [], fn assoc_data, new_list_assoc_data ->
-      acc_assoc_data_with_index =
-        new_list_assoc_data
-        |> Enum.with_index()
-        |> Enum.find(fn {acc_assoc_data, _index} -> acc_assoc_data.assoc_binding == assoc_data.assoc_binding end)
+  defp merge_assoc_data(assoc_list) do
+    Enum.reduce(assoc_list, [], fn assoc_data, new_assoc_list ->
+      new_assoc_list
+      |> Enum.with_index()
+      |> Enum.find(fn {acc_assoc_data, _index} -> acc_assoc_data.assoc_binding == assoc_data.assoc_binding end)
+      |> case do
+        {acc_assoc_data, index} ->
+          nested_assocs = merge_assoc_data(acc_assoc_data.nested_assocs ++ assoc_data.nested_assocs)
 
-      if acc_assoc_data_with_index do
-        {acc_assoc_data, index} = acc_assoc_data_with_index
+          join_type =
+            cond do
+              acc_assoc_data.join_type == assoc_data.join_type ->
+                assoc_data.join_type
 
-        nested_assocs = merge_assoc_data_in_token(acc_assoc_data.nested_assocs ++ assoc_data.nested_assocs)
+              acc_assoc_data.join_type == :left || assoc_data.join_type == :left ->
+                :left
 
-        List.replace_at(new_list_assoc_data, index, Map.put(acc_assoc_data, :nested_assocs, nested_assocs))
-      else
-        [assoc_data | new_list_assoc_data]
+              true ->
+                :inner
+            end
+
+          preload = acc_assoc_data.preload || assoc_data.join_type
+
+          new_assoc_data =
+            acc_assoc_data
+            |> Map.put(:nested_assocs, nested_assocs)
+            |> Map.put(:join_type, join_type)
+            |> Map.put(:preload, preload)
+
+          List.replace_at(new_assoc_list, index, new_assoc_data)
+
+        nil ->
+          [assoc_data | new_assoc_list]
       end
     end)
   end
 
-  defp token(token, _, [], _), do: token
+  defp do_build(assoc_list, [], _, _), do: assoc_list
 
-  defp token(token, query, [assoc_field | tail], state)
+  defp do_build(assoc_list, [assoc_field | tail], state, opts)
        when is_atom(assoc_field) do
-
     %{
       source_binding: source_binding,
       source_schema: source_schema,
       bindings: bindings
     } = state
 
-    assoc_data = assoc_data(query, source_binding, source_schema, assoc_field)
+    join_type =
+      case Keyword.get(opts, :join, :inner) do
+        :left ->
+          if(tail == [], do: :left, else: :inner)
+
+        join_type ->
+          join_type
+      end
+
+    preload = Keyword.get(opts, :preload, false)
+
+    assoc_data = assoc_data(source_binding, source_schema, assoc_field, join_type, preload)
 
     %{
-      assoc_binding: assoc_binding,
-      assoc_schema: assoc_schema,
-      has_joined: has_joined
+      assoc_binding: assoc_binding
     } = assoc_data
-
-    if has_joined do
-      raise_if_already_bound(bindings, assoc_schema, assoc_binding)
-    end
 
     state = %{state | bindings: [assoc_binding | bindings]}
 
-    token([assoc_data | token], query, tail, state)
+    do_build([assoc_data | assoc_list], tail, state, opts)
   end
 
-  defp token(token, query, [{assoc_field, nested_assoc_fields} | tail], state) do
+  defp do_build(assoc_list, [{assoc_field, nested_assoc_fields} | tail], state, opts) do
     %{
       source_binding: source_binding,
       source_schema: source_schema,
       bindings: bindings
     } = state
 
-    assoc_data = assoc_data(query, source_binding, source_schema, assoc_field)
+    join_type =
+      case Keyword.get(opts, :join, :inner) do
+        :left ->
+          if(tail == [], do: :left, else: :inner)
+
+        join_type ->
+          join_type
+      end
+
+    preload = Keyword.get(opts, :preload, false)
+
+    assoc_data = assoc_data(source_binding, source_schema, assoc_field, join_type, preload)
 
     %{
       assoc_binding: assoc_binding,
-      assoc_schema: assoc_schema,
-      has_joined: has_joined
+      assoc_schema: assoc_schema
     } = assoc_data
-
-    if has_joined do
-      raise_if_already_bound(bindings, assoc_schema, assoc_binding)
-    end
 
     state = %{state | bindings: [assoc_binding | bindings]}
 
     assoc_data = %{
       assoc_data
       | nested_assocs:
-          token([], query, List.wrap(nested_assoc_fields), %{
+          do_build([], List.wrap(nested_assoc_fields), %{
             state
             | source_binding: assoc_binding,
               source_schema: assoc_schema
-          })
+          }, opts)
     }
 
-    if !assoc_data.has_joined do
-      raise_if_any_nested_assoc_has_joined(assoc_data.assoc_schema, assoc_data.nested_assocs)
-    end
-
-    token([assoc_data | token], query, tail, state)
+    do_build([assoc_data | assoc_list], tail, state, opts)
   end
 
-  defp assoc_data(query, source_binding, source_schema, assoc_field) do
+  defp assoc_data(source_binding, source_schema, assoc_field, join_type, preload) do
     assoc_schema = assoc_schema(source_schema, assoc_field)
     cardinality = assoc_cardinality(source_schema, assoc_field)
 
@@ -172,14 +184,14 @@ defmodule QueryBuilder.Token do
         _ -> assoc_schema._binding()
       end
 
-    has_joined = Ecto.Query.has_named_binding?(query, assoc_binding)
-
     %{
       assoc_binding: assoc_binding,
       assoc_field: assoc_field,
       assoc_schema: assoc_schema,
       cardinality: cardinality,
-      has_joined: has_joined,
+      has_joined: false,
+      join_type: join_type,
+      preload: preload,
       nested_assocs: [],
       source_binding: source_binding,
       source_schema: source_schema
@@ -199,26 +211,5 @@ defmodule QueryBuilder.Token do
 
   defp assoc_cardinality(source_schema, assoc_field) do
     source_schema.__schema__(:association, assoc_field).cardinality
-  end
-
-  defp raise_if_already_bound(bindings, schema, binding) do
-    if Enum.member?(bindings, binding) do
-      raise "trying to bind #{schema} multiple times with same binding name"
-    end
-  end
-
-  defp raise_if_any_nested_assoc_has_joined(_, []), do: nil
-
-  defp raise_if_any_nested_assoc_has_joined(schema, [
-         %{has_joined: true, assoc_schema: nested_schema} | _tail
-       ]) do
-    raise "#{schema} has not been joined while nested #{nested_schema} has joined}"
-  end
-
-  defp raise_if_any_nested_assoc_has_joined(schema, [
-         %{has_joined: false, nested_assocs: nested_assocs} | tail
-       ]) do
-    raise_if_any_nested_assoc_has_joined(schema, nested_assocs)
-    raise_if_any_nested_assoc_has_joined(schema, tail)
   end
 end

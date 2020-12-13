@@ -22,12 +22,12 @@ defmodule QueryBuilder do
   ```
   """
   def preload(%QueryBuilder.Query{} = query, assoc_fields) do
-    QueryBuilder.Query.Preload.preload(query, assoc_fields)
+    %{query | operations: [%{type: :preload, assocs: assoc_fields, args: []} | query.operations]}
   end
 
-  def preload(query, assoc_fields) do
-    ensure_query_has_binding(query)
-    |> QueryBuilder.Query.Preload.preload(assoc_fields)
+  def preload(ecto_query, assoc_fields) do
+    ecto_query = ensure_query_has_binding(ecto_query)
+    preload(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields)
   end
 
   @doc ~S"""
@@ -63,12 +63,12 @@ defmodule QueryBuilder do
   def where(query, assoc_fields, filters, opts \\ [])
 
   def where(%QueryBuilder.Query{} = query, assoc_fields, filters, opts) do
-    QueryBuilder.Query.Where.where(query, assoc_fields, filters, opts)
+    %{query | operations: [%{type: :where, assocs: assoc_fields, args: [filters, opts]} | query.operations]}
   end
 
-  def where(query, assoc_fields, filters, opts) do
-    ensure_query_has_binding(query)
-    |> QueryBuilder.Query.Where.where(assoc_fields, filters, opts)
+  def where(ecto_query, assoc_fields, filters, opts) do
+    ecto_query = ensure_query_has_binding(ecto_query)
+    where(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields, filters, opts)
   end
 
   @doc ~S"""
@@ -114,12 +114,12 @@ defmodule QueryBuilder do
   ```
   """
   def order_by(%QueryBuilder.Query{} = query, assoc_fields, value) do
-    QueryBuilder.Query.OrderBy.order_by(query, assoc_fields, value)
+    %{query | operations: [%{type: :order_by, assocs: assoc_fields, args: [value]} | query.operations]}
   end
 
-  def order_by(query, assoc_fields, value) do
-    ensure_query_has_binding(query)
-    |> QueryBuilder.Query.OrderBy.order_by(assoc_fields, value)
+  def order_by(ecto_query, assoc_fields, value) do
+    ecto_query = ensure_query_has_binding(ecto_query)
+    order_by(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields, value)
   end
 
   @doc ~S"""
@@ -133,13 +133,13 @@ defmodule QueryBuilder do
   QueryBuilder.join(query, :articles, :left)
   ```
   """
-  def join(%QueryBuilder.Query{} = query, assoc_fields, type) do
-    QueryBuilder.Query.Join.join(query, assoc_fields, type)
+  def left_join(%QueryBuilder.Query{} = query, assoc_fields) do
+    %{query | operations: [%{type: :left_join, assocs: assoc_fields, args: []} | query.operations]}
   end
 
-  def join(query, assoc_fields, type) do
-    ensure_query_has_binding(query)
-    |> QueryBuilder.Query.Join.join(assoc_fields, type)
+  def left_join(ecto_query, assoc_fields) do
+    ecto_query = ensure_query_has_binding(ecto_query)
+    left_join(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields)
   end
 
   @doc ~S"""

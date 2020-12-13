@@ -4,48 +4,38 @@ defmodule QueryBuilder.Query.Where do
   require Ecto.Query
   import QueryBuilder.Utils
 
-  def where(query, assoc_fields, filters, opts \\ [])
-
-  def where(%QueryBuilder.Query{ecto_query: ecto_query, token: token}, assoc_fields, filters, opts) do
-    token = QueryBuilder.Token.token(ecto_query, token, assoc_fields)
-
-    %QueryBuilder.Query{ecto_query: ecto_query, token: token} =
-      QueryBuilder.JoinMaker.make_joins(ecto_query, token)
-
+  def where(ecto_query, assoc_list, filters, opts) do
     filters_list = [filters | Keyword.get_values(opts, :or)]
 
     dynamic_query =
       Enum.map(filters_list, fn filters ->
-        apply_filters(ecto_query, token, List.wrap(filters))
+        apply_filters(ecto_query, assoc_list, List.wrap(filters))
         |> Enum.reduce(&Ecto.Query.dynamic(^&1 and ^&2))
       end)
       |> Enum.reduce(&Ecto.Query.dynamic(^&1 or ^&2))
 
-    %QueryBuilder.Query{ecto_query: Ecto.Query.where(ecto_query, ^dynamic_query), token: token}
+    Ecto.Query.where(ecto_query, ^dynamic_query)
   end
 
-  def where(query, assoc_fields, filters, opts) do
-    where(%QueryBuilder.Query{ecto_query: query, token: nil}, assoc_fields, filters, opts)
+  defp apply_filters(_query, _assoc_list, []), do: []
+
+  defp apply_filters(query, assoc_list, [filter | tail]) do
+    [apply_filter(query, assoc_list, filter) | apply_filters(query, assoc_list, tail)]
   end
 
-  defp apply_filters(_query, _token, []), do: []
-
-  defp apply_filters(query, token, [filter | tail]) do
-    [apply_filter(query, token, filter) | apply_filters(query, token, tail)]
+  defp apply_filter(query, assoc_list, {field, value}) do
+    apply_filter(query, assoc_list, {field, :eq, value, []})
   end
 
-  defp apply_filter(query, token, {field, value}) do
-    apply_filter(query, token, {field, :eq, value, []})
+  defp apply_filter(query, assoc_list, {field, operator, value}) do
+    apply_filter(query, assoc_list, {field, operator, value, []})
   end
 
-  defp apply_filter(query, token, {field, operator, value}) do
-    apply_filter(query, token, {field, operator, value, []})
-  end
-
-  defp apply_filter(query, token, {field1, operator, field2, operator_opts})
+  defp apply_filter(query, assoc_list, {field1, operator, field2, operator_opts})
        when is_atom(field2) and field2 not in [nil, false, true] do
-    {field1, binding_field1} = find_field_and_binding_from_token(query, token, field1)
-    {field2, binding_field2} = find_field_and_binding_from_token(query, token, field2)
+    {field1, binding_field1} = find_field_and_binding_from_token(query, assoc_list, field1)
+    {field2, binding_field2} = find_field_and_binding_from_token(query, assoc_list, field2)
+
     do_where(
       binding_field1,
       binding_field2,
@@ -53,14 +43,14 @@ defmodule QueryBuilder.Query.Where do
     )
   end
 
-  defp apply_filter(query, token, {field, operator, value, operator_opts}) do
-    {field, binding} = find_field_and_binding_from_token(query, token, field)
+  defp apply_filter(query, assoc_list, {field, operator, value, operator_opts}) do
+    {field, binding} = find_field_and_binding_from_token(query, assoc_list, field)
 
     do_where(binding, {field, operator, value, operator_opts})
   end
 
-  defp apply_filter(query, token, custom_fun) when is_function(custom_fun) do
-    custom_fun.(&(find_field_and_binding_from_token(query, token, &1)))
+  defp apply_filter(query, assoc_list, custom_fun) when is_function(custom_fun) do
+    custom_fun.(&(find_field_and_binding_from_token(query, assoc_list, &1)))
   end
 
   defp do_where(binding, {field, :in, values, []}) when is_list(values) do

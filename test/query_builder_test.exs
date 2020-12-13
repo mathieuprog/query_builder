@@ -389,19 +389,19 @@ defmodule QueryBuilderTest do
   end
 
   test "join" do
-    # joining on authored articles but Bob is a publisher; not an author
+    # joining on authored articles but Eric is not an author
     refute User
            |> QueryBuilder.where(:authored_articles, name: "Eric")
            |> Repo.one()
 
     assert User
-           |> QueryBuilder.join(:authored_articles, :left)
+           |> QueryBuilder.left_join(:authored_articles)
            |> QueryBuilder.where(:authored_articles, name: "Eric")
            |> Repo.one()
 
     assert User
            |> QueryBuilder.where(name: "Eric")
-           |> QueryBuilder.join(:authored_articles, :left)
+           |> QueryBuilder.left_join(:authored_articles)
            |> QueryBuilder.where(:authored_articles, title@authored_articles: "ELIXIR V1.9 RELEASED")
            |> Repo.one()
   end
