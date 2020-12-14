@@ -60,15 +60,15 @@ defmodule QueryBuilder do
   QueryBuilder.where(query, [], [firstname: "John"], or: [firstname: "Alice", lastname: "Doe"], or: [firstname: "Bob"])
   ```
   """
-  def where(query, assoc_fields, filters, opts \\ [])
+  def where(query, assoc_fields, filters, or_filters \\ [])
 
-  def where(%QueryBuilder.Query{} = query, assoc_fields, filters, opts) do
-    %{query | operations: [%{type: :where, assocs: assoc_fields, args: [filters, opts]} | query.operations]}
+  def where(%QueryBuilder.Query{} = query, assoc_fields, filters, or_filters) do
+    %{query | operations: [%{type: :where, assocs: assoc_fields, args: [filters, or_filters]} | query.operations]}
   end
 
-  def where(ecto_query, assoc_fields, filters, opts) do
+  def where(ecto_query, assoc_fields, filters, or_filters) do
     ecto_query = ensure_query_has_binding(ecto_query)
-    where(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields, filters, opts)
+    where(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields, filters, or_filters)
   end
 
   @doc ~S"""
@@ -80,13 +80,13 @@ defmodule QueryBuilder do
 
   def maybe_where(query, false, _), do: query
 
-  def maybe_where(query, condition, assoc_fields, filters, opts \\ [])
+  def maybe_where(query, condition, assoc_fields, filters, or_filters \\ [])
 
   @doc ~S"""
   Run `QueryBuilder.where/4` only if given condition is met.
   """
-  def maybe_where(query, true, assoc_fields, filters, opts) do
-    where(query, assoc_fields, filters, opts)
+  def maybe_where(query, true, assoc_fields, filters, or_filters) do
+    where(query, assoc_fields, filters, or_filters)
   end
 
   def maybe_where(query, false, _, _, _), do: query
@@ -133,13 +133,15 @@ defmodule QueryBuilder do
   QueryBuilder.join(query, :articles, :left)
   ```
   """
-  def left_join(%QueryBuilder.Query{} = query, assoc_fields) do
-    %{query | operations: [%{type: :left_join, assocs: assoc_fields, args: []} | query.operations]}
+  def left_join(query, assoc_fields, filters \\ [], or_filters \\ [])
+
+  def left_join(%QueryBuilder.Query{} = query, assoc_fields, filters, or_filters) do
+    %{query | operations: [%{type: :left_join, assocs: assoc_fields, join_filters: [filters, or_filters]} | query.operations]}
   end
 
-  def left_join(ecto_query, assoc_fields) do
+  def left_join(ecto_query, assoc_fields, filters, or_filters) do
     ecto_query = ensure_query_has_binding(ecto_query)
-    left_join(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields)
+    left_join(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields, filters, or_filters)
   end
 
   @doc ~S"""

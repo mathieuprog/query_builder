@@ -12,36 +12,36 @@ defmodule QueryBuilder.JoinMaker do
   * `:type`: see `Ecto.Query.join/5`'s qualifier argument for possible values.
   """
   def make_joins(ecto_query, assoc_list) do
-    do_make_joins(ecto_query, assoc_list, [], [])
+    do_make_joins(ecto_query, assoc_list, [], [], assoc_list)
     # returns {ecto_query, new_assoc_list}
   end
 
-  defp do_make_joins(ecto_query, [], _, new_assoc_list), do: {ecto_query, new_assoc_list}
+  defp do_make_joins(ecto_query, [], _, new_assoc_list, _original_assoc_list),
+       do: {ecto_query, new_assoc_list}
 
-  defp do_make_joins(ecto_query, [assoc_data | tail], bindings, new_assoc_list) do
-    {ecto_query, assoc_data, bindings} = maybe_join(ecto_query, assoc_data, bindings)
+  defp do_make_joins(ecto_query, [assoc_data | tail], bindings, new_assoc_list, original_assoc_list) do
+    {ecto_query, assoc_data, bindings} =
+      maybe_join(ecto_query, assoc_data, bindings, original_assoc_list)
 
     {ecto_query, nested_assocs} =
       if assoc_data.has_joined do
-        do_make_joins(ecto_query, assoc_data.nested_assocs, bindings, [])
+        do_make_joins(ecto_query, assoc_data.nested_assocs, bindings, [], original_assoc_list)
       else
         {ecto_query, assoc_data.nested_assocs}
       end
 
     assoc_data = %{assoc_data | nested_assocs: nested_assocs}
 
-    {ecto_query, new_assoc_list} = do_make_joins(ecto_query, tail, bindings, new_assoc_list)
+    {ecto_query, new_assoc_list} =
+      do_make_joins(ecto_query, tail, bindings, new_assoc_list, original_assoc_list)
 
     {ecto_query, [assoc_data | new_assoc_list]}
   end
 
-#  defp maybe_join(ecto_query, %{has_joined: true} = assoc_data, bindings),
-#    do: {ecto_query, assoc_data, bindings}
-
-  defp maybe_join(ecto_query, %{cardinality: :many, join_type: :inner_if_cardinality_is_one} = assoc_data, bindings),
+  defp maybe_join(ecto_query, %{cardinality: :many, join_type: :inner_if_cardinality_is_one} = assoc_data, bindings, _original_assoc_list),
     do: {ecto_query, assoc_data, bindings}
 
-  defp maybe_join(ecto_query, assoc_data, bindings) do
+  defp maybe_join(ecto_query, assoc_data, bindings, original_assoc_list) do
     %{
       source_binding: source_binding,
       source_schema: source_schema,
@@ -50,28 +50,37 @@ defmodule QueryBuilder.JoinMaker do
       assoc_schema: assoc_schema,
       join_type: join_type
     } = assoc_data
-
-    has_joined = Ecto.Query.has_named_binding?(ecto_query, assoc_binding)
-    if has_joined do
+    if Ecto.Query.has_named_binding?(ecto_query, assoc_binding) do
       raise "has already joined"
     end
 
-    join_type =
+    {join_type, on} =
       case join_type do
         :left ->
-          :left
+          on =
+            if [] != Enum.filter(assoc_data.join_filters, &(&1 != [])) do
+              apply(
+                QueryBuilder.Query.Where,
+                :build_dynamic_query,
+                [ecto_query | [original_assoc_list | assoc_data.join_filters]]
+              )
+            else
+              []
+            end
+
+          {:left, on}
 
         _ ->
-          :inner
+          {:inner, []}
       end
 
     unless Enum.member?(bindings, assoc_binding) do
       # see schema.ex's module doc in order to understand what's going on here
       ecto_query =
         if String.contains?(to_string(assoc_binding), "__") do
-          source_schema._join(ecto_query, join_type, source_binding, assoc_field)
+          source_schema._join(ecto_query, join_type, source_binding, assoc_field, on)
         else
-          assoc_schema._join(ecto_query, join_type, source_binding, assoc_field)
+          assoc_schema._join(ecto_query, join_type, source_binding, assoc_field, on)
         end
 
       {

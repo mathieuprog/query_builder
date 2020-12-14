@@ -51,13 +51,14 @@ defmodule QueryBuilder.Schema do
         quote do
           Module.put_attribute(__MODULE__, :bindings, unquote(binding))
 
-          def _join(query, type, source_binding, unquote(assoc_field)) do
+          def _join(query, type, source_binding, unquote(assoc_field), on) do
             Ecto.Query.join(
               query,
               type,
               [{^source_binding, x}],
               y in assoc(x, ^unquote(assoc_field)),
-              as: unquote(binding)
+              as: unquote(binding),
+              on: ^on
             )
           end
 
@@ -69,9 +70,10 @@ defmodule QueryBuilder.Schema do
         def _binding(_), do: nil
       end,
       quote do
-        def _join(query, type, source_binding, assoc_field) do
+        def _join(query, type, source_binding, assoc_field, on) do
           Ecto.Query.join(query, type, [{^source_binding, x}], y in assoc(x, ^assoc_field),
-            as: unquote(__CALLER__.module)
+            as: unquote(__CALLER__.module),
+            on: ^on
           )
         end
       end

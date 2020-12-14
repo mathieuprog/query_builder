@@ -396,13 +396,12 @@ defmodule QueryBuilderTest do
 
     assert User
            |> QueryBuilder.left_join(:authored_articles)
-           |> QueryBuilder.where(:authored_articles, name: "Eric")
+           |> QueryBuilder.where(name: "Eric")
            |> Repo.one()
 
     assert User
            |> QueryBuilder.where(name: "Eric")
-           |> QueryBuilder.left_join(:authored_articles)
-           |> QueryBuilder.where(:authored_articles, title@authored_articles: "ELIXIR V1.9 RELEASED")
+           |> QueryBuilder.left_join(:authored_articles, title@authored_articles: "ELIXIR V1.9 RELEASED")
            |> Repo.one()
   end
 

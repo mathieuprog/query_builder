@@ -87,10 +87,13 @@ defmodule QueryBuilder.AssocList do
 
           preload = acc_assoc_data.preload || assoc_data.join_type
 
+          join_filters = acc_assoc_data.join_filters ++ assoc_data.join_filters
+
           new_assoc_data =
             acc_assoc_data
             |> Map.put(:nested_assocs, nested_assocs)
             |> Map.put(:join_type, join_type)
+            |> Map.put(:join_filters, join_filters)
             |> Map.put(:preload, preload)
 
           List.replace_at(new_assoc_list, index, new_assoc_data)
@@ -103,36 +106,6 @@ defmodule QueryBuilder.AssocList do
 
   defp do_build(assoc_list, [], _, _), do: assoc_list
 
-  defp do_build(assoc_list, [assoc_field | tail], state, opts)
-       when is_atom(assoc_field) do
-    %{
-      source_binding: source_binding,
-      source_schema: source_schema,
-      bindings: bindings
-    } = state
-
-    join_type =
-      case Keyword.get(opts, :join, :inner) do
-        :left ->
-          if(tail == [], do: :left, else: :inner)
-
-        join_type ->
-          join_type
-      end
-
-    preload = Keyword.get(opts, :preload, false)
-
-    assoc_data = assoc_data(source_binding, source_schema, assoc_field, join_type, preload)
-
-    %{
-      assoc_binding: assoc_binding
-    } = assoc_data
-
-    state = %{state | bindings: [assoc_binding | bindings]}
-
-    do_build([assoc_data | assoc_list], tail, state, opts)
-  end
-
   defp do_build(assoc_list, [{assoc_field, nested_assoc_fields} | tail], state, opts) do
     %{
       source_binding: source_binding,
@@ -140,18 +113,22 @@ defmodule QueryBuilder.AssocList do
       bindings: bindings
     } = state
 
-    join_type =
+    {join_type, join_filters} =
       case Keyword.get(opts, :join, :inner) do
         :left ->
-          if(tail == [], do: :left, else: :inner)
+          if nested_assoc_fields == [] do
+            {:left, List.wrap(Keyword.get(opts, :join_filters, []))}
+          else
+            {:inner, []}
+          end
 
         join_type ->
-          join_type
+          {join_type, []}
       end
 
     preload = Keyword.get(opts, :preload, false)
 
-    assoc_data = assoc_data(source_binding, source_schema, assoc_field, join_type, preload)
+    assoc_data = assoc_data(source_binding, source_schema, assoc_field, join_type, preload, join_filters)
 
     %{
       assoc_binding: assoc_binding,
@@ -160,20 +137,25 @@ defmodule QueryBuilder.AssocList do
 
     state = %{state | bindings: [assoc_binding | bindings]}
 
-    assoc_data = %{
-      assoc_data
-      | nested_assocs:
-          do_build([], List.wrap(nested_assoc_fields), %{
-            state
-            | source_binding: assoc_binding,
-              source_schema: assoc_schema
-          }, opts)
-    }
+    assoc_data =
+      %{
+        assoc_data
+        | nested_assocs:
+            do_build([], List.wrap(nested_assoc_fields), %{
+              state
+              | source_binding: assoc_binding,
+                source_schema: assoc_schema
+            }, opts)
+      }
 
     do_build([assoc_data | assoc_list], tail, state, opts)
   end
 
-  defp assoc_data(source_binding, source_schema, assoc_field, join_type, preload) do
+  defp do_build(assoc_list, [assoc_field | tail], state, opts) do
+    do_build(assoc_list, [{assoc_field, []} | tail], state, opts)
+  end
+
+  defp assoc_data(source_binding, source_schema, assoc_field, join_type, preload, join_filters) do
     assoc_schema = assoc_schema(source_schema, assoc_field)
     cardinality = assoc_cardinality(source_schema, assoc_field)
 
@@ -191,6 +173,7 @@ defmodule QueryBuilder.AssocList do
       cardinality: cardinality,
       has_joined: false,
       join_type: join_type,
+      join_filters: join_filters,
       preload: preload,
       nested_assocs: [],
       source_binding: source_binding,

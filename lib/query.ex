@@ -14,14 +14,14 @@ defimpl Ecto.Queryable, for: QueryBuilder.Query do
     source_schema = QueryBuilder.Utils.root_schema(ecto_query)
 
     assoc_list =
-      Enum.reduce(operations, [], fn %{assocs: assocs, type: type}, accumulated_assocs ->
+      Enum.reduce(operations, [], fn %{assocs: assocs, type: type} = operation, accumulated_assocs ->
         opts =
           case type do
             :preload ->
               [join: :inner_if_cardinality_is_one, preload: true]
 
             :left_join ->
-              [join: :left]
+              [join: :left, join_filters: operation.join_filters]
 
             _ ->
               []
@@ -35,6 +35,9 @@ defimpl Ecto.Queryable, for: QueryBuilder.Query do
 
     ecto_query =
       Enum.reduce(operations, ecto_query, fn
+        %{type: :left_join}, ecto_query ->
+          ecto_query
+
         %{type: type, args: args}, ecto_query ->
           Module.concat(QueryBuilder.Query, to_string(type) |> Macro.camelize())
           |> apply(type, [ecto_query | [assoc_list | args]])
