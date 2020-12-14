@@ -47,6 +47,10 @@ defmodule QueryBuilder.AssocList do
     * `:nested_assocs`: the nested associations (list)
     * `:source_binding`: *named binding* of the source schema (atom)
     * `:source_schema`: module name of the source schema (atom)
+    * `join_type`: `:left` or `inner` (atom)
+    * `join_filters`: only in case of a left join, clauses for the `:on` option (list of
+    two keyword lists – and/or clauses)
+    * `preload`: is to be preloaded or not (boolean)
 
   This information allows the exposed functions such as `QueryBuilder.where/3` to join
   associations, refer to associations, etc.

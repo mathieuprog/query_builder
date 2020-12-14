@@ -184,10 +184,10 @@ QueryBuilder.order_by(query, :articles, title@articles: :asc)
 QueryBuilder.preload(query, [role: :permissions, articles: [:stars, comments: :user]])
 ```
 
-`QueryBuilder.join/3`
+`QueryBuilder.left_join/4`
 
 ```elixir
-QueryBuilder.join(query, :articles, :left)
+QueryBuilder.left_join(query, :articles, title@articles: "Foo", or: [title@articles: "Bar"])
 ```
 
 `QueryBuilder.from_list/2`

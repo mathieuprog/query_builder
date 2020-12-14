@@ -125,12 +125,9 @@ defmodule QueryBuilder do
   @doc ~S"""
   A join query expression.
 
-  Third argument `type` may be passed one of the possible values for
-  `Ecto.Query.join/5`'s qualifier argument.
-
   Example:
   ```
-  QueryBuilder.join(query, :articles, :left)
+  QueryBuilder.left_join(query, :articles, title@articles: "Foo", or: [title@articles: "Bar"])
   ```
   """
   def left_join(query, assoc_fields, filters \\ [], or_filters \\ [])
