@@ -403,6 +403,11 @@ defmodule QueryBuilderTest do
            |> QueryBuilder.where(name: "Eric")
            |> QueryBuilder.left_join(:authored_articles, title@authored_articles: "ELIXIR V1.9 RELEASED")
            |> Repo.one()
+
+    refute User
+           |> QueryBuilder.where(name: "Eric")
+           |> QueryBuilder.where(:authored_articles, title@authored_articles: "ELIXIR V1.9 RELEASED")
+           |> Repo.one()
   end
 
   test "preload" do
