@@ -388,7 +388,7 @@ defmodule QueryBuilderTest do
     assert hd(alice.authored_articles).title == "MINT, A NEW HTTP CLIENT FOR ELIXIR"
   end
 
-  test "join" do
+  test "left_join" do
     # joining on authored articles but Eric is not an author
     refute User
            |> QueryBuilder.where(:authored_articles, name: "Eric")
