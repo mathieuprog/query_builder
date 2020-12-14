@@ -6,6 +6,14 @@ defmodule QueryBuilder.Query do
   )
 end
 
+defimpl Inspect, for: QueryBuilder.Query do
+  def inspect(query, opts) do
+    query
+    |> Ecto.Queryable.to_query()
+    |> Inspect.inspect(opts)
+  end
+end
+
 defimpl Ecto.Queryable, for: QueryBuilder.Query do
   def to_query(%{
     ecto_query: ecto_query,
