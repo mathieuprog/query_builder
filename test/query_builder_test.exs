@@ -81,7 +81,7 @@ defmodule QueryBuilderTest do
 
     query =
       User
-      |> QueryBuilder.where(id: 102)
+      |> QueryBuilder.where(id: 103)
       |> QueryBuilder.preload(:authored_articles)
 
     assert Repo.one!(query).authored_articles == []

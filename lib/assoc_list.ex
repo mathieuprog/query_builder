@@ -181,7 +181,7 @@ defmodule QueryBuilder.AssocList do
       end
 
     {join_type, auth_z_join_filters} =
-      case authorizer && authorizer.reject_unauthorized_assoc(source_schema, assoc_field) do
+      case authorizer && authorizer.reject_unauthorized_assoc(source_schema, {assoc_field, assoc_schema}) do
         %{join: join, on: on, or_on: or_on} ->
           {cond do
             join == :left || join_type == :left -> :left

@@ -15,8 +15,6 @@ defimpl Inspect, for: QueryBuilder.Query do
 end
 
 defimpl Ecto.Queryable, for: QueryBuilder.Query do
-  @authorizer Application.get_env(:query_builder, :authorizer)
-
   def to_query(%{ecto_query: ecto_query} = query) do
     source_schema = QueryBuilder.Utils.root_schema(ecto_query)
 
@@ -43,7 +41,7 @@ defimpl Ecto.Queryable, for: QueryBuilder.Query do
               []
           end
 
-        opts = [{:authorizer, @authorizer} | opts]
+        opts = [{:authorizer, authorizer()} | opts]
 
         QueryBuilder.AssocList.build(source_schema, accumulated_assocs, assocs, opts)
       end)

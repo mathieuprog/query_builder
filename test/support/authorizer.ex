@@ -26,7 +26,7 @@ defmodule QueryBuilder.Authorizer do
     query
   end
 
-  def reject_unauthorized_assoc(User, :authored_articles) do
+  def reject_unauthorized_assoc(User, {:authored_articles, Article}) do
     grantors_for_user =
       Acl
       |> QueryBuilder.where(grantee_id: @current_user_id)
