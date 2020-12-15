@@ -40,12 +40,6 @@ defmodule QueryBuilder.Authorizer do
     }
   end
 
-#  def reject_unauthorized_assoc(User, :published_articles) do
-#    query
-#    |> QueryBuilder.where([:acl_grantor, :published_articles],
-#         grantor_id@acl_grantor: :id@authored_articles, grantee_id@acl_grantor: @current_user_id)
-#  end
-
   def reject_unauthorized_assoc(_source, _assoc) do
     nil
   end
