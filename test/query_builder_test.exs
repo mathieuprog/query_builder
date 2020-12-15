@@ -13,6 +13,8 @@ defmodule QueryBuilderTest do
   setup :insert_demo_data
 
   def insert_demo_data(_) do
+    Application.put_env(:query_builder, :authorizer, nil)
+
     role_admin = insert(:role, %{name: "admin"})
     role_author = insert(:role, %{name: "author"})
     role_publisher = insert(:role, %{name: "publisher"})
@@ -68,21 +70,23 @@ defmodule QueryBuilderTest do
   end
 
   test "authorizer" do
-#    query =
-#      User
-#      |> QueryBuilder.where(id: 101)
-#      |> QueryBuilder.preload(:authored_articles)
-#
-#    assert Repo.one!(query).authored_articles != []
-#
-#    query =
-#      User
-#      |> QueryBuilder.where(id: 102)
-#      |> QueryBuilder.preload(:authored_articles)
-#
-#    assert Repo.one!(query).authored_articles == []
-#
-#    assert length(Repo.all(Article)) == 4
+    Application.put_env(:query_builder, :authorizer, QueryBuilder.Authorizer)
+
+    query =
+      User
+      |> QueryBuilder.where(id: 101)
+      |> QueryBuilder.preload(:authored_articles)
+
+    assert Repo.one!(query).authored_articles != []
+
+    query =
+      User
+      |> QueryBuilder.where(id: 102)
+      |> QueryBuilder.preload(:authored_articles)
+
+    assert Repo.one!(query).authored_articles == []
+
+    assert length(Repo.all(Article)) == 4
 
     assert length(Repo.all(QueryBuilder.new(Article))) == 3
   end

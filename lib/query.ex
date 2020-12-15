@@ -21,10 +21,12 @@ defimpl Ecto.Queryable, for: QueryBuilder.Query do
     source_schema = QueryBuilder.Utils.root_schema(ecto_query)
 
     %{ecto_query: ecto_query, operations: operations} =
-      if @authorizer do
-        @authorizer.reject_unauthorized(query, source_schema)
-      else
-        query
+      case authorizer() do
+        nil ->
+          query
+
+        authorizer ->
+          authorizer.reject_unauthorized(query, source_schema)
       end
 
     assoc_list =
@@ -60,5 +62,9 @@ defimpl Ecto.Queryable, for: QueryBuilder.Query do
       end)
 
     Ecto.Queryable.to_query(ecto_query)
+  end
+
+  defp authorizer() do
+    Application.get_env(:query_builder, :authorizer)
   end
 end
