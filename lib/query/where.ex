@@ -11,11 +11,11 @@ defmodule QueryBuilder.Query.Where do
   end
 
   def build_dynamic_query(ecto_query, assoc_list, filters, or_filters) do
-    filters_list =
-      [filters | Keyword.get_values(or_filters, :or)]
-      |> Enum.filter(&(&1 != []))
+    filters_list = [filters | Keyword.get_values(or_filters, :or)]
 
-    Enum.map(filters_list, fn filters ->
+    filters_list
+    |> Enum.filter(&(&1 != []))
+    |> Enum.map(fn filters ->
       apply_filters(ecto_query, assoc_list, List.wrap(filters))
       |> Enum.reduce(&Ecto.Query.dynamic(^&1 and ^&2))
     end)

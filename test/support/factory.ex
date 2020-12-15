@@ -24,6 +24,13 @@ defmodule QueryBuilder.Factory do
     }
   end
 
+  def acl_factory do
+    %QueryBuilder.Acl{
+      grantee: build(:user),
+      grantor: build(:user)
+    }
+  end
+
   def article_factory do
     title = sequence(:title, &"Article #{&1}")
 

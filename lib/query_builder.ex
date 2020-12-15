@@ -9,6 +9,10 @@ defmodule QueryBuilder do
     end
   end
 
+  def new(ecto_query) do
+    %QueryBuilder.Query{ecto_query: ensure_query_has_binding(ecto_query)}
+  end
+
   @doc ~S"""
   Preloads the associations.
 
@@ -133,7 +137,7 @@ defmodule QueryBuilder do
   def left_join(query, assoc_fields, filters \\ [], or_filters \\ [])
 
   def left_join(%QueryBuilder.Query{} = query, assoc_fields, filters, or_filters) do
-    %{query | operations: [%{type: :left_join, assocs: assoc_fields, join_filters: [filters, or_filters]} | query.operations]}
+    %{query | operations: [%{type: :left_join, assocs: assoc_fields, join_filters: [List.wrap(filters), List.wrap(or_filters)]} | query.operations]}
   end
 
   def left_join(ecto_query, assoc_fields, filters, or_filters) do

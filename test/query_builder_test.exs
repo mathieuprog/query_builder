@@ -26,9 +26,10 @@ defmodule QueryBuilderTest do
     insert(:permission, %{role: role_publisher, name: "publish"})
     insert(:permission, %{role: role_reader, name: "read"})
 
-    author1 = insert(:user, %{name: "Alice", email: "alice@example.com", role: role_author, nickname: "Alice"})
-    author2 = insert(:user, %{name: "Bob", email: "the_bob@example.com", role: role_author, nickname: "Bobby"})
-    reader = insert(:user, %{name: "Eric", email: nil, role: role_reader, nickname: "Eric", deleted: true})
+    author1 = insert(:user, %{id: 100, name: "Alice", email: "alice@example.com", role: role_author, nickname: "Alice"})
+    author2 = insert(:user, %{id: 101, name: "Bob", email: "the_bob@example.com", role: role_author, nickname: "Bobby"})
+    author3 = insert(:user, %{id: 103, name: "Charlie", email: "charlie@example.com", role: role_author, nickname: "Charly"})
+    reader = insert(:user, %{id: 102, name: "Eric", email: nil, role: role_reader, nickname: "Eric", deleted: true})
     insert(:user, %{name: "Dave", email: "dave@example.com", role: role_admin, nickname: "Dave"})
     insert(:user, %{name: "Richard", email: "richard@example.com", role: role_admin, nickname: "Rich"})
     insert(:user, %{name: "An% we_ird %name_%", email: "weirdo@example.com", role: role_reader, nickname: "John"})
@@ -37,14 +38,19 @@ defmodule QueryBuilderTest do
     publisher =
       insert(:user, %{name: "Calvin", email: "calvin@example.com", role: role_publisher, nickname: "Calvin"})
 
+    insert(:acl, %{grantee: author1, grantor: author2})
+    insert(:acl, %{grantee: reader, grantor: author1})
+
     title1 = "ELIXIR V1.9 RELEASED"
     title2 = "MINT, A NEW HTTP CLIENT FOR ELIXIR"
     title3 = "ELIXIR V1.8 RELEASED"
+    title4 = "INTEGRATING TRAVEL WITH ELIXIR AT DUFFEL"
 
     articles = [
       insert(:article, %{title: title1, author: author1, publisher: publisher, tags: ["baz", "qux"]}),
       insert(:article, %{title: title2, author: author1, publisher: publisher, tags: ["baz"]}),
-      insert(:article, %{title: title3, author: author2, publisher: publisher})
+      insert(:article, %{title: title3, author: author2, publisher: publisher}),
+      insert(:article, %{title: title4, author: author3, publisher: publisher})
     ]
 
     for article <- articles do
@@ -59,6 +65,26 @@ defmodule QueryBuilderTest do
     end
 
     :ok
+  end
+
+  test "authorizer" do
+#    query =
+#      User
+#      |> QueryBuilder.where(id: 101)
+#      |> QueryBuilder.preload(:authored_articles)
+#
+#    assert Repo.one!(query).authored_articles != []
+#
+#    query =
+#      User
+#      |> QueryBuilder.where(id: 102)
+#      |> QueryBuilder.preload(:authored_articles)
+#
+#    assert Repo.one!(query).authored_articles == []
+#
+#    assert length(Repo.all(Article)) == 4
+
+    assert length(Repo.all(QueryBuilder.new(Article))) == 3
   end
 
   test "where" do
@@ -89,14 +115,14 @@ defmodule QueryBuilderTest do
       |> QueryBuilder.where({:name, :ne, "Bob"})
       |> Repo.all()
 
-    assert 7 == length(all_users_but_bob)
+    assert 8 == length(all_users_but_bob)
 
     all_users_but_bob =
       User
       |> QueryBuilder.where({:name, :other_than, "Bob"})
       |> Repo.all()
 
-    assert 7 == length(all_users_but_bob)
+    assert 8 == length(all_users_but_bob)
 
     users_containing_ri =
       User
@@ -180,7 +206,7 @@ defmodule QueryBuilderTest do
       |> QueryBuilder.where({:name, :not_in, ["Alice", "Bob"]})
       |> Repo.all()
 
-    assert 6 == length(users_not_in_list)
+    assert 7 == length(users_not_in_list)
 
     articles_including_tags =
       Article
@@ -194,7 +220,7 @@ defmodule QueryBuilderTest do
       |> QueryBuilder.where({:tags, :exclude, "baz"})
       |> Repo.all()
 
-    assert 1 == length(articles_excluding_tags)
+    assert 2 == length(articles_excluding_tags)
   end
 
   test "where with or groups" do
@@ -218,7 +244,7 @@ defmodule QueryBuilderTest do
       |> QueryBuilder.where(:role, [name@role: "author"], or: [name@role: "publisher"])
       |> Repo.all()
 
-    assert 3 == length(result)
+    assert 4 == length(result)
   end
 
   test "where multiple conditions" do
@@ -257,7 +283,7 @@ defmodule QueryBuilderTest do
       |> QueryBuilder.maybe_where(false, name: "Bob")
       |> Repo.all()
 
-    assert 8 == length(maybe_bob)
+    assert 9 == length(maybe_bob)
   end
 
   test "where boolean" do
@@ -273,21 +299,21 @@ defmodule QueryBuilderTest do
       |> QueryBuilder.where({:deleted, :ne, true})
       |> Repo.all()
 
-    assert 7 == length(not_deleted_users)
+    assert 8 == length(not_deleted_users)
 
     not_deleted_users =
       User
       |> QueryBuilder.where({:deleted, :eq, false})
       |> Repo.all()
 
-    assert 7 == length(not_deleted_users)
+    assert 8 == length(not_deleted_users)
 
     not_deleted_users =
       User
       |> QueryBuilder.where(deleted: false)
       |> Repo.all()
 
-    assert 7 == length(not_deleted_users)
+    assert 8 == length(not_deleted_users)
   end
 
   test "where is (not) null" do
@@ -303,7 +329,7 @@ defmodule QueryBuilderTest do
       |> QueryBuilder.where({:email, :ne, nil})
       |> Repo.all()
 
-    assert 7 == length(users_with_email)
+    assert 8 == length(users_with_email)
 
     users_without_email =
       User
@@ -326,14 +352,14 @@ defmodule QueryBuilderTest do
       |> QueryBuilder.where({:email, :contains, :name, case: :insensitive})
       |> Repo.all()
 
-    assert 5 == length(users_where_name_included_in_email)
+    assert 6 == length(users_where_name_included_in_email)
 
     users_where_name_included_in_email =
       User
       |> QueryBuilder.where({:email, :starts_with, :name, case: :insensitive})
       |> Repo.all()
 
-    assert 4 == length(users_where_name_included_in_email)
+    assert 5 == length(users_where_name_included_in_email)
   end
 
   test "where with assocs" do
@@ -342,14 +368,14 @@ defmodule QueryBuilderTest do
       |> QueryBuilder.where(:role, name@role: "author")
       |> Repo.all()
 
-    assert 2 == length(all_authors)
+    assert 3 == length(all_authors)
 
     all_users_with_write_role =
       User
       |> QueryBuilder.where([role: :permissions], name@permissions: "write")
       |> Repo.all()
 
-    assert 2 == length(all_users_with_write_role)
+    assert 3 == length(all_users_with_write_role)
   end
 
   test "order_by" do
@@ -389,11 +415,7 @@ defmodule QueryBuilderTest do
   end
 
   test "left_join" do
-    # joining on authored articles but Eric is not an author
-    refute User
-           |> QueryBuilder.where(:authored_articles, name: "Eric")
-           |> Repo.one()
-
+    # Eric is not an author
     assert User
            |> QueryBuilder.left_join(:authored_articles)
            |> QueryBuilder.where(name: "Eric")

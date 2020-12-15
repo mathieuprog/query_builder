@@ -15,11 +15,17 @@ defimpl Inspect, for: QueryBuilder.Query do
 end
 
 defimpl Ecto.Queryable, for: QueryBuilder.Query do
-  def to_query(%{
-    ecto_query: ecto_query,
-    operations: operations
-  }) do
+  @authorizer Application.get_env(:query_builder, :authorizer)
+
+  def to_query(%{ecto_query: ecto_query} = query) do
     source_schema = QueryBuilder.Utils.root_schema(ecto_query)
+
+    %{ecto_query: ecto_query, operations: operations} =
+      if @authorizer do
+        @authorizer.reject_unauthorized(query, source_schema)
+      else
+        query
+      end
 
     assoc_list =
       Enum.reduce(operations, [], fn %{assocs: assocs, type: type} = operation, accumulated_assocs ->
@@ -34,6 +40,8 @@ defimpl Ecto.Queryable, for: QueryBuilder.Query do
             _ ->
               []
           end
+
+        opts = [{:authorizer, @authorizer} | opts]
 
         QueryBuilder.AssocList.build(source_schema, accumulated_assocs, assocs, opts)
       end)

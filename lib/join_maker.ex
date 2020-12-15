@@ -54,24 +54,17 @@ defmodule QueryBuilder.JoinMaker do
       raise "has already joined"
     end
 
-    {join_type, on} =
-      case join_type do
-        :left ->
-          on =
-            if [] != Enum.filter(assoc_data.join_filters, &(&1 != [])) do
-              apply(
-                QueryBuilder.Query.Where,
-                :build_dynamic_query,
-                [ecto_query | [original_assoc_list | assoc_data.join_filters]]
-              )
-            else
-              []
-            end
+    join_type = if(join_type == :left, do: :left, else: :inner)
 
-          {:left, on}
-
-        _ ->
-          {:inner, []}
+    on =
+      if assoc_data.join_filters != [] do
+        assoc_data.join_filters
+        |> Enum.map(fn [filters, or_filters] ->
+          QueryBuilder.Query.Where.build_dynamic_query(ecto_query, original_assoc_list, filters, or_filters)
+        end)
+        |> Enum.reduce(&Ecto.Query.dynamic(^&1 and ^&2))
+      else
+        []
       end
 
     unless Enum.member?(bindings, assoc_binding) do

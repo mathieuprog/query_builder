@@ -25,6 +25,13 @@ defmodule QueryBuilder.CreateTables do
       timestamps()
     end
 
+    create table(:acl) do
+      add(:grantee_id, references(:users))
+      add(:grantor_id, references(:users))
+
+      timestamps()
+    end
+
     create table(:groups) do
       add(:name, :string)
 

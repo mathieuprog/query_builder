@@ -31,8 +31,8 @@ defmodule QueryBuilder.MixProject do
 
   defp deps do
     [
-      {:ecto, "~> 3.2"},
-      {:ecto_sql, "~> 3.2", only: :test},
+      {:ecto, "~> 3.5"},
+      {:ecto_sql, "~> 3.5", only: :test},
       {:postgrex, "~> 0.14", only: :test},
       {:ex_machina, "~> 2.3", only: :test},
       {:map_diff, "~> 1.3", only: :test},
