@@ -6,7 +6,7 @@ Query Builder allows you to build and compose Ecto queries based on data.
 User
 |> QueryBuilder.where(firstname: "John")
 |> QueryBuilder.where([{:age, :gt, 30}, city: "Anytown"])
-|> QueryBuilder.order_by(lastname: :asc)
+|> QueryBuilder.order_by(asc: :lastname)
 |> QueryBuilder.preload([:role, authored_articles: :comments])
 |> Repo.all()
 ```
@@ -18,7 +18,7 @@ Its primary goal is to allow Context functions to receive a set of filters and
 options:
 
 ```elixir
-Blog.list_articles(preload: :comments, order_by: [title: :asc])
+Blog.list_articles(preload: :comments, order_by: [asc: :title])
 Blog.list_articles(preload: [:category, comments: :user])
 ```
 
@@ -39,7 +39,7 @@ See `QueryBuilder.from_list/2` below.
 User
 |> QueryBuilder.where(firstname: "John")
 |> QueryBuilder.where([{:age, :gt, 30}, city: "Anytown"])
-|> QueryBuilder.order_by(lastname: :asc)
+|> QueryBuilder.order_by(asc: :lastname)
 |> QueryBuilder.preload([:role, authored_articles: :comments])
 |> Repo.all()
 ```
@@ -169,13 +169,13 @@ The above will run `where/2` if the given condition is met.
 `QueryBuilder.order_by/2`
 
 ```elixir
-QueryBuilder.order_by(query, lastname: :asc, firstname: :asc)
+QueryBuilder.order_by(query, asc: :lastname, asc: :firstname)
 ```
 
 `QueryBuilder.order_by/3`
 
 ```elixir
-QueryBuilder.order_by(query, :articles, title@articles: :asc)
+QueryBuilder.order_by(query, :articles, asc: :title@articles)
 ```
 
 `QueryBuilder.preload/2`
@@ -224,7 +224,7 @@ Blog.get_article_by_id(id, preload: [:likes])
 
 Blog.get_article_by_id(
   id,
-  order_by: {:comments, inserted_at@comments: :desc},
+  order_by: {:comments, desc: :inserted_at@comments},
   preload: [comments: :user]
 )
 ```

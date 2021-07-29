@@ -30,7 +30,7 @@ defmodule QueryBuilderTest do
 
     author1 = insert(:user, %{id: 100, name: "Alice", email: "alice@example.com", role: role_author, nickname: "Alice"})
     author2 = insert(:user, %{id: 101, name: "Bob", email: "the_bob@example.com", role: role_author, nickname: "Bobby"})
-    author3 = insert(:user, %{id: 103, name: "Charlie", email: "charlie@example.com", role: role_author, nickname: "Charly"})
+    author3 = insert(:user, %{id: 103, name: "Charlie", email: "charlie@example.com", role: role_author, nickname: "Lee"})
     reader = insert(:user, %{id: 102, name: "Eric", email: nil, role: role_reader, nickname: "Eric", deleted: true})
     insert(:user, %{name: "Dave", email: "dave@example.com", role: role_admin, nickname: "Dave"})
     insert(:user, %{name: "Richard", email: "richard@example.com", role: role_admin, nickname: "Rich"})
@@ -260,7 +260,7 @@ defmodule QueryBuilderTest do
     assert 1 == length(alice)
   end
 
-  test "where with fragment" do
+  test "where with custom query" do
     text_equals_condition = fn (field, value, get_binding_fun) ->
       {field, binding} = get_binding_fun.(field)
       Ecto.Query.dynamic([{^binding, x}], fragment("initcap(?)", ^value) == field(x, ^field))
@@ -385,14 +385,14 @@ defmodule QueryBuilderTest do
   test "order_by" do
     users_ordered_asc =
       User
-      |> QueryBuilder.order_by(name: :asc)
+      |> QueryBuilder.order_by(asc: :name)
       |> Repo.all()
 
     assert "Alice" == hd(users_ordered_asc).name
 
     users_ordered_desc =
       User
-      |> QueryBuilder.order_by(name: :desc)
+      |> QueryBuilder.order_by(desc: :name)
       |> Repo.all()
 
     assert "Richard" == hd(users_ordered_desc).name
@@ -402,7 +402,7 @@ defmodule QueryBuilderTest do
     alice =
       User
       |> QueryBuilder.where(name: "Alice")
-      |> QueryBuilder.order_by(:authored_articles, title@authored_articles: :asc)
+      |> QueryBuilder.order_by(:authored_articles, asc: :title@authored_articles)
       |> QueryBuilder.preload(:authored_articles)
       |> Repo.one!()
 
@@ -411,11 +411,25 @@ defmodule QueryBuilderTest do
     alice =
       User
       |> QueryBuilder.where(name: "Alice")
-      |> QueryBuilder.order_by(:authored_articles, title@authored_articles: :desc)
+      |> QueryBuilder.order_by(:authored_articles, desc: :title@authored_articles)
       |> QueryBuilder.preload(:authored_articles)
       |> Repo.one!()
 
     assert hd(alice.authored_articles).title == "MINT, A NEW HTTP CLIENT FOR ELIXIR"
+  end
+
+  test "order_by with fragment" do
+    character_length = fn (field, get_binding_fun) ->
+      {field, binding} = get_binding_fun.(field)
+      Ecto.Query.dynamic([{^binding, x}], fragment("character_length(?)", field(x, ^field)))
+    end
+
+    ordered_users =
+      User
+      |> QueryBuilder.order_by(asc: &character_length.(:nickname, &1))
+      |> Repo.all()
+
+    assert hd(ordered_users).nickname == "Lee"
   end
 
   test "left_join" do
@@ -477,7 +491,7 @@ defmodule QueryBuilderTest do
         where: [{:email, :equal_to, "alice@example.com"}],
         where: [name: "Alice", nickname: "Alice"],
         where: {[role: :permissions], name@permissions: "write"},
-        order_by: {:authored_articles, title@authored_articles: :asc},
+        order_by: {:authored_articles, asc: :title@authored_articles},
         preload: :authored_articles
       )
       |> Repo.one!()

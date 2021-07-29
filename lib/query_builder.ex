@@ -100,7 +100,7 @@ defmodule QueryBuilder do
 
   Example:
   ```
-  QueryBuilder.order_by(query, lastname: :asc, firstname: :asc)
+  QueryBuilder.order_by(query, asc: :lastname, asc: :firstname)
   ```
   """
   def order_by(query, value) do
@@ -114,7 +114,7 @@ defmodule QueryBuilder do
 
   Example:
   ```
-  QueryBuilder.order_by(query, :articles, title@articles: :asc)
+  QueryBuilder.order_by(query, :articles, asc: :title@articles)
   ```
   """
   def order_by(%QueryBuilder.Query{} = query, assoc_fields, value) do
