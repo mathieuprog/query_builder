@@ -3,7 +3,7 @@ defmodule QueryBuilder.User do
   use Ecto.Schema
 
   schema "users" do
-    field(:name, :string)
+    field(:name, QueryBuilder.AorB)
     field(:email, :string)
     field(:nickname, :string)
     field(:deleted, :boolean)

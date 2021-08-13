@@ -346,21 +346,28 @@ defmodule QueryBuilderTest do
   test "where comparing two fields" do
     users_where_name_matches_nickname =
       User
-      |> QueryBuilder.where({:name, :eq, :nickname})
+      |> QueryBuilder.where({:name, :eq, :nickname@self})
       |> Repo.all()
 
     assert 4 == length(users_where_name_matches_nickname)
 
+    users_where_name_matches_raw_nickname =
+      User
+      |> QueryBuilder.where({:name, :eq, :nickname})
+      |> Repo.all()
+
+    assert 0 == length(users_where_name_matches_raw_nickname)
+
     users_where_name_included_in_email =
       User
-      |> QueryBuilder.where({:email, :contains, :name, case: :insensitive})
+      |> QueryBuilder.where({:email, :contains, :name@self, case: :insensitive})
       |> Repo.all()
 
     assert 6 == length(users_where_name_included_in_email)
 
     users_where_name_included_in_email =
       User
-      |> QueryBuilder.where({:email, :starts_with, :name, case: :insensitive})
+      |> QueryBuilder.where({:email, :starts_with, :name@self, case: :insensitive})
       |> Repo.all()
 
     assert 5 == length(users_where_name_included_in_email)
