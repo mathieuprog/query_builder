@@ -4,6 +4,8 @@ defmodule QueryBuilder.Query.Where do
   require Ecto.Query
   import QueryBuilder.Utils
 
+  @value_is_field_marker "@self"
+
   def where(ecto_query, assoc_list, filters, or_filters) do
     dynamic_query = build_dynamic_query(ecto_query, assoc_list, filters, or_filters)
 
@@ -36,16 +38,22 @@ defmodule QueryBuilder.Query.Where do
     apply_filter(query, assoc_list, {field, operator, value, []})
   end
 
-  defp apply_filter(query, assoc_list, {field1, operator, field2, operator_opts})
-       when is_atom(field2) and field2 not in [nil, false, true] do
-    {field1, binding_field1} = find_field_and_binding_from_token(query, assoc_list, field1)
-    {field2, binding_field2} = find_field_and_binding_from_token(query, assoc_list, field2)
+  defp apply_filter(query, assoc_list, {field, operator, value, operator_opts})
+       when is_atom(value) do
+    {field, binding_field1} = find_field_and_binding_from_token(query, assoc_list, field)
 
-    do_where(
-      binding_field1,
-      binding_field2,
-      {field1, operator, field2, operator_opts}
-    )
+    if value_is_field(value) do
+      field2 = referenced_field_in_value(value)
+      {field2, binding_field2} = find_field_and_binding_from_token(query, assoc_list, field2)
+
+      do_where(
+        binding_field1,
+        binding_field2,
+        {field, operator, field2, operator_opts}
+      )
+    else
+      do_where(binding_field1, {field, operator, value, operator_opts})
+    end
   end
 
   defp apply_filter(query, assoc_list, {field, operator, value, operator_opts}) do
@@ -184,5 +192,23 @@ defmodule QueryBuilder.Query.Where do
             Ecto.Query.dynamic([{^b1, x}, {^b2, y}], fragment("? ilike concat('%', ?, '%')", field(x, ^f1), field(y, ^f2)))
         end
     end
+  end
+
+  defp value_is_field(val) when val in [nil, false, true], do: false
+
+  defp value_is_field(val) do
+    val |> to_string() |> String.ends_with?(@value_is_field_marker)
+  end
+
+  defp referenced_field_in_value(val) do
+    str_val = to_string(val)
+
+    str_val
+    |> binary_part(0, byte_size(str_val) - byte_size(@value_is_field_marker))
+
+    # Fields are usually represented as atoms, but we convert to strings later
+    # in parsing the query anyway @see &QueryBuilder.Utils.find_field_and_binding_from_token/3
+    # No need for atom conversion
+    # |> String.to_existing_atom()
   end
 end

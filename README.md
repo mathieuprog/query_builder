@@ -229,6 +229,24 @@ Blog.get_article_by_id(
 )
 ```
 
+## Special Considerations
+
+With the auto-binding functionality offered by Query Builder, you can specify field comparisons in queries using the special atom value syntax: `:<field_name>@self`. This way Query Builder understands the intent is to compare fields vs a raw value.  For example:
+
+```elixir
+users_where_name_matches_nickname =
+  User
+  |> QueryBuilder.where({:name, :eq, :nickname@self})
+  |> Repo.all()
+```
+
+would resolve to a query along the following form:
+
+```sql
+select * from users where users.name = users.nickname
+```
+
+
 ## Installation
 
 Add `query_builder` for Elixir as a dependency in your `mix.exs` file:
