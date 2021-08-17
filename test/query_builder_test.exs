@@ -505,4 +505,27 @@ defmodule QueryBuilderTest do
 
     assert hd(alice.authored_articles).title == "ELIXIR V1.9 RELEASED"
   end
+
+  test "extension" do
+    # Call custom query functionality directly
+    alice =
+      User
+      |> CustomQueryBuilder.where_initcap(:name, "alice")
+      |> Repo.all()
+
+    assert 1 == length(alice)
+
+    # Test from_list
+    alice =
+      User
+      |> CustomQueryBuilder.from_list(
+        where_initcap: {:name, "alice"},
+        where: {[role: :permissions], name@permissions: "write"},
+        order_by: {:authored_articles, asc: :title@authored_articles},
+        preload: :authored_articles
+      )
+      |> Repo.one!()
+
+    assert hd(alice.authored_articles).title == "ELIXIR V1.9 RELEASED"
+  end
 end
