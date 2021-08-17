@@ -193,19 +193,22 @@ defmodule QueryBuilder.Query.Where do
         end
     end
   end
+
   defp value_is_field(val) when val in [nil, false, true], do: false
 
-  defp value_is_field(val) when is_atom(val) do
-    val |> Atom.to_string() |> String.ends_with?(@value_is_field_marker)
+  defp value_is_field(val) do
+    val |> to_string() |> String.ends_with?(@value_is_field_marker)
   end
 
-  defp value_is_field(_), do: false
-
-  defp referenced_field_in_value(val) when is_atom(val) do
-    str_val = Atom.to_string(val)
+  defp referenced_field_in_value(val) do
+    str_val = to_string(val)
 
     str_val
     |> binary_part(0, byte_size(str_val) - byte_size(@value_is_field_marker))
-    |> String.to_atom()
+
+    # Fields are usually represented as atoms, but we convert to strings later
+    # in parsing the query anyway @see &QueryBuilder.Utils.find_field_and_binding_from_token/3
+    # No need for atom conversion
+    # |> String.to_existing_atom()
   end
 end
