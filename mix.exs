@@ -60,7 +60,10 @@ defmodule QueryBuilder.MixProject do
     [
       licenses: ["Apache 2.0"],
       maintainers: ["Mathieu Decaffmeyer"],
-      links: %{"GitHub" => "https://github.com/mathieuprog/query_builder"}
+      links: %{
+        "GitHub" => "https://github.com/mathieuprog/query_builder",
+        "Sponsor" => "https://github.com/sponsors/mathieuprog"
+      }
     ]
   end
 
