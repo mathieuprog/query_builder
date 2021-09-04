@@ -43,6 +43,8 @@ User
 |> QueryBuilder.where([{:age, :gt, 30}, city: "Anytown"])
 |> QueryBuilder.order_by(asc: :lastname)
 |> QueryBuilder.preload([:role, authored_articles: :comments])
+|> QueryBuilder.offset(20)
+|> QueryBuilder.limit(10)
 |> Repo.all()
 ```
 
@@ -209,7 +211,10 @@ QueryBuilder.limit(query, 10)
 ```elixir
 QueryBuilder.from_list(query, [
   where: [name: "John", city: "Anytown"],
-  preload: [articles: :comments]
+  preload: [articles: :comments],
+  order_by: {:articles, asc: :title@articles},
+  limit: 20,
+  offset: 10
 ])
 ```
 

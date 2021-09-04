@@ -572,6 +572,43 @@ defmodule QueryBuilderTest do
       |> Repo.one!()
 
     assert hd(alice.authored_articles).title == "ELIXIR V1.9 RELEASED"
+
+    not_bob_count =
+      User
+      |> QueryBuilder.from_list(where: [{:name, :ne, "Bob"}])
+      |> Repo.all()
+      |> length()
+
+    skip_two_not_bob =
+      User
+      |> QueryBuilder.from_list(
+        where: [{:name, :ne, "Bob"}],
+        offset: 2
+      )
+      |> Repo.all()
+
+    assert not_bob_count - 2 == length(skip_two_not_bob)
+
+    only_three_not_bob =
+      User
+      |> QueryBuilder.from_list(
+        where: [{:name, :ne, "Bob"}],
+        limit: 3
+      )
+      |> Repo.all()
+
+    assert 3 == length(only_three_not_bob)
+
+    skip_two_only_one_not_bob =
+      User
+      |> QueryBuilder.from_list(
+        where: [{:name, :ne, "Bob"}],
+        offset: 2,
+        limit: 1
+      )
+      |> Repo.all()
+
+    assert 1 == length(skip_two_only_one_not_bob)
   end
 
   test "extension" do

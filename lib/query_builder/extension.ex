@@ -70,6 +70,8 @@ defmodule QueryBuilder.Extension do
       defdelegate preload(query, assoc_fields), to: QueryBuilder
       defdelegate where(query, filters), to: QueryBuilder
       defdelegate where(query, assoc_fields, filters, or_filters \\ []), to: QueryBuilder
+      defdelegate offset(query, value), to: QueryBuilder
+      defdelegate limit(query, value), to: QueryBuilder
 
       @doc ~S"""
       Allows to pass a list of operations through a keyword list.
