@@ -127,6 +127,25 @@ defmodule QueryBuilder do
   end
 
   @doc ~S"""
+  A limit query expression.
+  If multiple limit expressions are provided, the last expression is evaluated
+
+  Example:
+  ```
+  QueryBuilder.limit(query, 10)
+  ```
+  """
+  def limit(%QueryBuilder.Query{} = query, value) do
+    # Limit order must be maintained, similar to Ecto:
+    # - https://hexdocs.pm/ecto/Ecto.Query-macro-limit.html
+    %{query | operations: query.operations ++ [%{type: :limit, assocs: [], args: [value]}]}
+  end
+
+  def limit(ecto_query, value) do
+    limit(%QueryBuilder.Query{ecto_query: ecto_query}, value)
+  end
+
+  @doc ~S"""
   A join query expression.
 
   Example:

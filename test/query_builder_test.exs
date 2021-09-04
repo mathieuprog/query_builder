@@ -491,6 +491,41 @@ defmodule QueryBuilderTest do
     assert %{changed: :equal} = MapDiff.diff(Repo.all(query), Repo.all(built_query))
   end
 
+  test "limit" do
+    all_users_but_bob =
+      User
+      |> QueryBuilder.where({:name, :ne, "Bob"})
+      |> Repo.all()
+
+    assert 8 == length(all_users_but_bob)
+
+    three_users_not_bob =
+      User
+      |> QueryBuilder.where({:name, :ne, "Bob"})
+      |> QueryBuilder.limit(3)
+      |> Repo.all()
+
+    assert 3 == length(three_users_not_bob)
+
+    two_users_not_bob =
+      User
+      |> QueryBuilder.where({:name, :ne, "Bob"})
+      |> QueryBuilder.limit(4)
+      |> QueryBuilder.limit(3)
+      |> QueryBuilder.limit(2)
+      |> Repo.all()
+
+    assert 2 == length(two_users_not_bob)
+
+    two_users_not_bob =
+      User
+      |> QueryBuilder.where({:name, :ne, "Bob"})
+      |> QueryBuilder.limit("2")
+      |> Repo.all()
+
+    assert 2 == length(two_users_not_bob)
+  end
+
   test "from list" do
     alice =
       User
