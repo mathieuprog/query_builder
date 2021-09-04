@@ -8,6 +8,7 @@ User
 |> QueryBuilder.where([{:age, :gt, 30}, city: "Anytown"])
 |> QueryBuilder.order_by(asc: :lastname)
 |> QueryBuilder.preload([:role, authored_articles: :comments])
+|> QueryBuilder.offset(20)
 |> QueryBuilder.limit(10)
 |> Repo.all()
 ```
@@ -189,6 +190,12 @@ QueryBuilder.preload(query, [role: :permissions, articles: [:stars, comments: :u
 
 ```elixir
 QueryBuilder.left_join(query, :articles, title@articles: "Foo", or: [title@articles: "Bar"])
+```
+
+`QueryBuilder.offset/2`
+
+```elixir
+QueryBuilder.offset(query, 10)
 ```
 
 `QueryBuilder.limit/2`

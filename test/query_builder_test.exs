@@ -526,6 +526,39 @@ defmodule QueryBuilderTest do
     assert 2 == length(two_users_not_bob)
   end
 
+  test "offset" do
+    all_users_count =
+      User
+      |> Repo.all()
+      |> length()
+
+    users_minus_three_count =
+      User
+      |> QueryBuilder.offset(3)
+      |> Repo.all()
+      |> length()
+
+    assert all_users_count - 3 == users_minus_three_count
+
+    users_minus_two_count =
+      User
+      |> QueryBuilder.offset(4)
+      |> QueryBuilder.offset(3)
+      |> QueryBuilder.offset(2)
+      |> Repo.all()
+      |> length()
+
+    assert all_users_count - 2 == users_minus_two_count
+
+    users_minus_two_count =
+      User
+      |> QueryBuilder.offset("2")
+      |> Repo.all()
+      |> length()
+
+    assert all_users_count - 2 == users_minus_two_count
+  end
+
   test "from list" do
     alice =
       User
