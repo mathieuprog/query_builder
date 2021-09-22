@@ -13,7 +13,7 @@ defmodule QueryBuilder.Query.Limit do
 
   defp apply_limit(query, value) do
     case Integer.parse(value) do
-      {int_value, __rest} ->
+      {int_value, _rest} ->
         apply_limit(query, int_value)
 
       _ ->

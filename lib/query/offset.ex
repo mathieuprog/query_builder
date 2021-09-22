@@ -13,7 +13,7 @@ defmodule QueryBuilder.Query.Offset do
 
   defp apply_offset(query, value) do
     case Integer.parse(value) do
-      {int_value, __rest} ->
+      {int_value, _rest} ->
         apply_offset(query, int_value)
 
       _ ->

@@ -249,7 +249,7 @@ Blog.get_article_by_id(
 ```
 
 ## Extending Query Functions
-In the event that you want to extend QueryBuilder's functionality to include custom app specific query functions, there's the `QueryBuilder.Extension` macro to facilitate that.  You can create an extension module and use the `QueryBuilder.Extension` macro to inject all `QueryBuilder` functions into your custom module.  Any custom query functions added to your custom module are also available utilizing `QueryBuilder.from_list/2`.
+In the event that you want to extend QueryBuilder's functionality to include custom app specific query functions, there's the `QueryBuilder.Extension` module to facilitate that.  You can create a module with your app specific query functionality and `use` the `QueryBuilder.Extension` module to inject all `QueryBuilder` functions into your custom module.  Any custom query functions added to your custom module are included in `QueryBuilder.from_list/2`.
 
 For example:
 
