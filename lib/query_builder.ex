@@ -127,6 +127,44 @@ defmodule QueryBuilder do
   end
 
   @doc ~S"""
+  A limit query expression.
+  If multiple limit expressions are provided, the last expression is evaluated
+
+  Example:
+  ```
+  QueryBuilder.limit(query, 10)
+  ```
+  """
+  def limit(%QueryBuilder.Query{} = query, value) do
+    # Limit order must be maintained, similar to Ecto:
+    # - https://hexdocs.pm/ecto/Ecto.Query-macro-limit.html
+    %{query | operations: query.operations ++ [%{type: :limit, assocs: [], args: [value]}]}
+  end
+
+  def limit(ecto_query, value) do
+    limit(%QueryBuilder.Query{ecto_query: ecto_query}, value)
+  end
+
+  @doc ~S"""
+  A offset query expression.
+  If multiple offset expressions are provided, the last expression is evaluated
+
+  Example:
+  ```
+  QueryBuilder.offset(query, 10)
+  ```
+  """
+  def offset(%QueryBuilder.Query{} = query, value) do
+    # Offset order must be maintained, similar to Ecto:
+    # - https://hexdocs.pm/ecto/Ecto.Query.html#offset/3
+    %{query | operations: query.operations ++ [%{type: :offset, assocs: [], args: [value]}]}
+  end
+
+  def offset(ecto_query, value) do
+    offset(%QueryBuilder.Query{ecto_query: ecto_query}, value)
+  end
+
+  @doc ~S"""
   A join query expression.
 
   Example:

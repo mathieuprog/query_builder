@@ -8,6 +8,8 @@ User
 |> QueryBuilder.where([{:age, :gt, 30}, city: "Anytown"])
 |> QueryBuilder.order_by(asc: :lastname)
 |> QueryBuilder.preload([:role, authored_articles: :comments])
+|> QueryBuilder.offset(20)
+|> QueryBuilder.limit(10)
 |> Repo.all()
 ```
 
@@ -41,6 +43,8 @@ User
 |> QueryBuilder.where([{:age, :gt, 30}, city: "Anytown"])
 |> QueryBuilder.order_by(asc: :lastname)
 |> QueryBuilder.preload([:role, authored_articles: :comments])
+|> QueryBuilder.offset(20)
+|> QueryBuilder.limit(10)
 |> Repo.all()
 ```
 
@@ -190,12 +194,27 @@ QueryBuilder.preload(query, [role: :permissions, articles: [:stars, comments: :u
 QueryBuilder.left_join(query, :articles, title@articles: "Foo", or: [title@articles: "Bar"])
 ```
 
+`QueryBuilder.offset/2`
+
+```elixir
+QueryBuilder.offset(query, 10)
+```
+
+`QueryBuilder.limit/2`
+
+```elixir
+QueryBuilder.limit(query, 10)
+```
+
 `QueryBuilder.from_list/2`
 
 ```elixir
 QueryBuilder.from_list(query, [
   where: [name: "John", city: "Anytown"],
-  preload: [articles: :comments]
+  preload: [articles: :comments],
+  order_by: {:articles, asc: :title@articles},
+  limit: 20,
+  offset: 10
 ])
 ```
 
@@ -227,6 +246,57 @@ Blog.get_article_by_id(
   order_by: {:comments, desc: :inserted_at@comments},
   preload: [comments: :user]
 )
+```
+
+## Extending Query Functions
+In the event that you want to extend QueryBuilder's functionality to include custom app specific query functions, there's the `QueryBuilder.Extension` module to facilitate that.  You can create a module with your app specific query functionality and `use` the `QueryBuilder.Extension` module to inject all `QueryBuilder` functions into your custom module.  Any custom query functions added to your custom module are included in `QueryBuilder.from_list/2`.
+
+For example:
+
+```elixir
+defmodule MyApp.QueryBuilder do
+  use QueryBuilder.Extension
+
+  defmacro __using__(opts) do
+    quote do
+      require QueryBuilder
+      QueryBuilder.__using__(unquote(opts))
+    end
+  end
+
+  # Add app specific query functions here...
+
+  def where_initcap(query, field, value) do
+    text_equals_condition = fn field, value, get_binding_fun ->
+      {field, binding} = get_binding_fun.(field)
+      Ecto.Query.dynamic([{^binding, x}], fragment("initcap(?)", ^value) == field(x, ^field))
+    end
+
+    query
+    |> where(&text_equals_condition.(field, value, &1))
+  end
+end
+
+defmodule MyApp.Accounts.User do
+  use MyApp.QueryBuilder
+
+  schema "users" do
+    field :name, :string
+    field :active, :boolean
+  end
+end
+
+defmodule MyApp.Accounts do
+  alias MyApp.QueryBuilder, as: QB
+
+  def list_users(opts \\ []) do
+    # Query list can include custom query functions as well:
+    # [where_initcap: {:name, "john"}, where: {:active, true}]
+    MyApp.Accounts.User
+    |> QB.from_list(opts)
+    |> Repo.all()
+  end
+end
 ```
 
 ## Special Considerations

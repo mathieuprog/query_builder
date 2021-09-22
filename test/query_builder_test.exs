@@ -491,12 +491,140 @@ defmodule QueryBuilderTest do
     assert %{changed: :equal} = MapDiff.diff(Repo.all(query), Repo.all(built_query))
   end
 
+  test "limit" do
+    all_users_but_bob =
+      User
+      |> QueryBuilder.where({:name, :ne, "Bob"})
+      |> Repo.all()
+
+    assert 8 == length(all_users_but_bob)
+
+    three_users_not_bob =
+      User
+      |> QueryBuilder.where({:name, :ne, "Bob"})
+      |> QueryBuilder.limit(3)
+      |> Repo.all()
+
+    assert 3 == length(three_users_not_bob)
+
+    two_users_not_bob =
+      User
+      |> QueryBuilder.where({:name, :ne, "Bob"})
+      |> QueryBuilder.limit(4)
+      |> QueryBuilder.limit(3)
+      |> QueryBuilder.limit(2)
+      |> Repo.all()
+
+    assert 2 == length(two_users_not_bob)
+
+    two_users_not_bob =
+      User
+      |> QueryBuilder.where({:name, :ne, "Bob"})
+      |> QueryBuilder.limit("2")
+      |> Repo.all()
+
+    assert 2 == length(two_users_not_bob)
+  end
+
+  test "offset" do
+    all_users_count =
+      User
+      |> Repo.all()
+      |> length()
+
+    users_minus_three_count =
+      User
+      |> QueryBuilder.offset(3)
+      |> Repo.all()
+      |> length()
+
+    assert all_users_count - 3 == users_minus_three_count
+
+    users_minus_two_count =
+      User
+      |> QueryBuilder.offset(4)
+      |> QueryBuilder.offset(3)
+      |> QueryBuilder.offset(2)
+      |> Repo.all()
+      |> length()
+
+    assert all_users_count - 2 == users_minus_two_count
+
+    users_minus_two_count =
+      User
+      |> QueryBuilder.offset("2")
+      |> Repo.all()
+      |> length()
+
+    assert all_users_count - 2 == users_minus_two_count
+  end
+
   test "from list" do
     alice =
       User
       |> QueryBuilder.from_list(
         where: [{:email, :equal_to, "alice@example.com"}],
         where: [name: "Alice", nickname: "Alice"],
+        where: {[role: :permissions], name@permissions: "write"},
+        order_by: {:authored_articles, asc: :title@authored_articles},
+        preload: :authored_articles
+      )
+      |> Repo.one!()
+
+    assert hd(alice.authored_articles).title == "ELIXIR V1.9 RELEASED"
+
+    not_bob_count =
+      User
+      |> QueryBuilder.from_list(where: [{:name, :ne, "Bob"}])
+      |> Repo.all()
+      |> length()
+
+    skip_two_not_bob =
+      User
+      |> QueryBuilder.from_list(
+        where: [{:name, :ne, "Bob"}],
+        offset: 2
+      )
+      |> Repo.all()
+
+    assert not_bob_count - 2 == length(skip_two_not_bob)
+
+    only_three_not_bob =
+      User
+      |> QueryBuilder.from_list(
+        where: [{:name, :ne, "Bob"}],
+        limit: 3
+      )
+      |> Repo.all()
+
+    assert 3 == length(only_three_not_bob)
+
+    skip_two_only_one_not_bob =
+      User
+      |> QueryBuilder.from_list(
+        where: [{:name, :ne, "Bob"}],
+        offset: 2,
+        limit: 1
+      )
+      |> Repo.all()
+
+    assert 1 == length(skip_two_only_one_not_bob)
+  end
+
+  test "extension" do
+    # Call custom query functionality directly
+    alice =
+      User
+      |> CustomQueryBuilder.where_initcap(:name, "alice")
+      |> Repo.all()
+
+    assert 1 == length(alice)
+
+    # Test from_list
+    alice =
+      User
+      |> CustomQueryBuilder.from_list(
+        where_initcap: {:name, "alice"},
         where: {[role: :permissions], name@permissions: "write"},
         order_by: {:authored_articles, asc: :title@authored_articles},
         preload: :authored_articles
