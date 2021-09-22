@@ -1,7 +1,7 @@
 defmodule QueryBuilder.MixProject do
   use Mix.Project
 
-  @version "0.19.2"
+  @version "1.0.0"
 
   def project do
     [
