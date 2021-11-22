@@ -89,7 +89,7 @@ defmodule QueryBuilder.AssocList do
                 :inner
             end
 
-          preload = acc_assoc_data.preload || assoc_data.join_type
+          preload = acc_assoc_data.preload || assoc_data.preload
 
           join_filters =
             acc_assoc_data.join_filters ++ assoc_data.join_filters
