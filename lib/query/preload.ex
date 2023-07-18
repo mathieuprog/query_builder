@@ -54,7 +54,8 @@ defmodule QueryBuilder.Query.Preload do
       |> Enum.map(&convert_list_to_nested_keyword_list(&1))
       |> Enum.reduce(ecto_query, fn list, ecto_query ->
         atom_or_tuple = hd(list)
-        Ecto.Query.preload(ecto_query, ^atom_or_tuple)
+        preload = List.wrap(atom_or_tuple)
+        Ecto.Query.preload(ecto_query, ^preload)
       end)
 
     ecto_query
