@@ -13,6 +13,166 @@ defmodule QueryBuilder do
     %QueryBuilder.Query{ecto_query: ensure_query_has_binding(ecto_query)}
   end
 
+  def paginate(%QueryBuilder.Query{} = query, repo, opts \\ []) do
+    page_size = Keyword.get(opts, :page_size, 100)
+    cursor_direction = Keyword.fetch!(opts, :direction)
+
+    cursor =
+      case Keyword.get(opts, :cursor) || %{} do
+        cursor when is_map(cursor) ->
+          cursor
+
+        cursor ->
+          with {:ok, decoded_string} <- Base.url_decode64(cursor),
+               {:ok, cursor} <- Jason.decode(decoded_string) do
+              cursor
+          else
+            _ -> %{}
+          end
+      end
+
+    query = limit(query, page_size + 1)
+
+    already_sorting_on_id? =
+      Enum.any?(query.operations, fn
+        %{type: :order_by, args: [keyword_list]} ->
+          Enum.member?(Keyword.values(keyword_list), :id)
+
+        _ ->
+          false
+      end)
+
+    query =
+      if already_sorting_on_id? do
+        query
+      else
+        order_by(query, asc: :id)
+      end
+
+    # reverse sorting order if direction is before
+    operations =
+      if cursor_direction == :before do
+        query.operations
+        |> Enum.map(fn
+          %{type: :order_by, args: [keyword_list]} = operation ->
+            updated_keyword_list =
+              Enum.map(keyword_list, fn {direction, field} ->
+                if String.contains?(to_string(field), "@") do
+                  {direction, field}
+                else
+                  case direction do
+                    :asc -> {:desc, field}
+                    :desc -> {:asc, field}
+                  end
+                end
+              end)
+
+            Map.put(operation, :args, [updated_keyword_list])
+
+          operation ->
+            operation
+        end)
+      else
+        query.operations
+      end
+
+    query = Map.put(query, :operations, operations)
+
+    order_by_list =
+      query.operations
+      |> Enum.filter(&match?(%{type: :order_by}, &1))
+      |> Enum.reverse()
+      |> Enum.flat_map(&Map.fetch!(&1, :args))
+      |> Enum.flat_map(&Enum.reject(&1, fn {_direction, field} -> String.contains?(to_string(field), "@") end))
+      |> Enum.uniq_by(fn {_direction, field} -> field end)
+
+    cursor_fields = Map.keys(cursor)
+    valid_cursor? = Enum.all?(Keyword.values(order_by_list), &Enum.member?(cursor_fields, to_string(&1)))
+
+    query =
+      if valid_cursor? do
+        {_, filters} =
+          Enum.reduce(order_by_list, {[], []}, fn {order_direction, field}, {prev_fields, filters} ->
+            operator =
+              cond do
+                order_direction == :desc && cursor_direction == :after ->
+                  :lt
+
+                order_direction == :asc && cursor_direction == :after ->
+                  :gt
+
+                # we reversed the sorting order when the cursor direction is :before
+                order_direction == :desc && cursor_direction == :before ->
+                  :lt
+
+                order_direction == :asc && cursor_direction == :before ->
+                  :gt
+              end
+
+            filter =
+              Enum.map(prev_fields, &{&1, cursor[to_string(&1)]})
+              |> Enum.concat([{field, operator, cursor[to_string(field)]}])
+
+            {prev_fields ++ [field], filters ++ [filter]}
+          end)
+
+        [first_filter | rest_filters] = filters
+
+        or_filters = Enum.map(rest_filters, &{:or, &1})
+
+        where(query, [], first_filter, or_filters)
+      else
+        query
+      end
+
+    entries = repo.all(query)
+
+    entries =
+      if cursor_direction == :before do
+        Enum.reverse(entries)
+      else
+        entries
+      end
+
+    has_more? = length(entries) == page_size + 1
+
+    entries =
+      if has_more? do
+        case cursor_direction do
+          :before ->
+            tl(entries)
+
+          :after ->
+            List.delete_at(entries, -1)
+        end
+      else
+        entries
+      end
+
+    first_entry = List.first(entries)
+    last_entry = List.last(entries)
+
+    build_cursor = fn entry ->
+      if entry do
+        order_by_list
+        |> Enum.map(fn {_, field} -> {field, Map.get(entry, field)} end)
+        |> Enum.into(%{})
+        |> Jason.encode!()
+        |> Base.url_encode64()
+      end
+    end
+
+    %{
+      pagination: %{
+        cursor_direction: cursor_direction,
+        cursor_for_entries_before: build_cursor.(first_entry),
+        cursor_for_entries_after: build_cursor.(last_entry),
+        has_more_entries: has_more?
+      },
+      paginated_entries: entries
+    }
+  end
+
   @doc ~S"""
   Preloads the associations.
 
@@ -138,7 +298,7 @@ defmodule QueryBuilder do
   def limit(%QueryBuilder.Query{} = query, value) do
     # Limit order must be maintained, similar to Ecto:
     # - https://hexdocs.pm/ecto/Ecto.Query-macro-limit.html
-    %{query | operations: query.operations ++ [%{type: :limit, assocs: [], args: [value]}]}
+    %{query | operations: [%{type: :limit, assocs: [], args: [value]} | query.operations]}
   end
 
   def limit(ecto_query, value) do
@@ -157,7 +317,7 @@ defmodule QueryBuilder do
   def offset(%QueryBuilder.Query{} = query, value) do
     # Offset order must be maintained, similar to Ecto:
     # - https://hexdocs.pm/ecto/Ecto.Query.html#offset/3
-    %{query | operations: query.operations ++ [%{type: :offset, assocs: [], args: [value]}]}
+    %{query | operations: [%{type: :offset, assocs: [], args: [value]} | query.operations]}
   end
 
   def offset(ecto_query, value) do
