@@ -14,7 +14,7 @@ defmodule QueryBuilder do
   end
 
   def paginate(%QueryBuilder.Query{} = query, repo, opts \\ []) do
-    page_size = Keyword.get(opts, :page_size, 100)
+    page_size = Keyword.get(opts, :page_size, default_page_size())
     cursor_direction = Keyword.get(opts, :direction, :after)
 
     cursor =
@@ -171,6 +171,10 @@ defmodule QueryBuilder do
       },
       paginated_entries: entries
     }
+  end
+
+  def default_page_size() do
+    Application.get_env(:query_builder, :default_page_size, 100)
   end
 
   @doc ~S"""
