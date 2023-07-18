@@ -3,6 +3,7 @@ defmodule QueryBuilderTest do
   import QueryBuilder.Factory
   alias QueryBuilder.{Repo, User, Article}
   require Ecto.Query
+  import Ecto.Query
 
   doctest QueryBuilder
 
@@ -32,13 +33,13 @@ defmodule QueryBuilderTest do
     author2 = insert(:user, %{id: 101, name: "Bob", email: "the_bob@example.com", role: role_author, nickname: "Bobby"})
     author3 = insert(:user, %{id: 103, name: "Charlie", email: "charlie@example.com", role: role_author, nickname: "Lee"})
     reader = insert(:user, %{id: 102, name: "Eric", email: nil, role: role_reader, nickname: "Eric", deleted: true})
-    insert(:user, %{name: "Dave", email: "dave@example.com", role: role_admin, nickname: "Dave"})
-    insert(:user, %{name: "Richard", email: "richard@example.com", role: role_admin, nickname: "Rich"})
-    insert(:user, %{name: "An% we_ird %name_%", email: "weirdo@example.com", role: role_reader, nickname: "John"})
-    insert(:user, %{name: "An_ we_ird %name_%", email: "weirdo@example.com", role: role_reader, nickname: "James"})
+    insert(:user, %{id: 200, name: "Dave", email: "dave@example.com", role: role_admin, nickname: "Dave"})
+    insert(:user, %{id: 201, name: "Richard", email: "richard@example.com", role: role_admin, nickname: "Rich"})
+    insert(:user, %{id: 202, name: "An% we_ird %name_%", email: "weirdo@example.com", role: role_reader, nickname: "John"})
+    insert(:user, %{id: 203, name: "An_ we_ird %name_%", email: "weirdo@example.com", role: role_reader, nickname: "James"})
 
     publisher =
-      insert(:user, %{name: "Calvin", email: "calvin@example.com", role: role_publisher, nickname: "Calvin"})
+      insert(:user, %{id: 300, name: "Calvin", email: "calvin@example.com", role: role_publisher, nickname: "Calvin"})
 
     insert(:acl, %{grantee: author1, grantor: author2})
     insert(:acl, %{grantee: reader, grantor: author1})
@@ -491,6 +492,89 @@ defmodule QueryBuilderTest do
     assert %{changed: :equal} = MapDiff.diff(Repo.all(query), Repo.all(built_query))
   end
 
+  test "cursor pagination" do
+    query = from u in User, order_by: [asc: u.nickname, desc: u.email]
+    query = from u in query, order_by: [desc: u.email]
+    all_users = Repo.all(query)
+
+    assert ["Alice", "Bobby", "Calvin", "Dave", "Eric", "James", "John", "Lee", "Rich"] = all_users |> Enum.map(& &1.nickname)
+
+    all_users =
+      User
+      |> QueryBuilder.order_by(asc: :nickname, desc: :email)
+      |> QueryBuilder.order_by(desc: :email)
+      |> Repo.all()
+
+    assert ["Alice", "Bobby", "Calvin", "Dave", "Eric", "James", "John", "Lee", "Rich"] = all_users |> Enum.map(& &1.nickname)
+
+    assert 9 == length(all_users)
+
+    query =
+      User
+      |> QueryBuilder.order_by(asc: :nickname, desc: :email)
+      |> QueryBuilder.order_by(desc: :email)
+
+    %{paginated_entries: paginated_entries, pagination: pagination} =
+      QueryBuilder.paginate(query, Repo, page_size: 3, cursor: nil, direction: :after)
+
+    assert %{
+      cursor_direction: :after,
+      cursor_for_entries_before: _cursor_for_entries_before,
+      cursor_for_entries_after: cursor_for_entries_after,
+      has_more_entries: true
+    } = pagination
+
+    assert ["Alice", "Bobby", "Calvin"] = paginated_entries |> Enum.map(& &1.nickname)
+
+    %{paginated_entries: paginated_entries, pagination: pagination} =
+      QueryBuilder.paginate(query, Repo, page_size: 3, cursor: cursor_for_entries_after, direction: :after)
+
+    assert %{
+      cursor_direction: :after,
+      cursor_for_entries_before: _cursor_for_entries_before,
+      cursor_for_entries_after: cursor_for_entries_after,
+      has_more_entries: true
+    } = pagination
+
+    assert ["Dave", "Eric", "James"] = paginated_entries |> Enum.map(& &1.nickname)
+
+    %{paginated_entries: paginated_entries, pagination: pagination} =
+      QueryBuilder.paginate(query, Repo, page_size: 3, cursor: cursor_for_entries_after, direction: :after)
+
+    assert %{
+      cursor_direction: :after,
+      cursor_for_entries_before: cursor_for_entries_before,
+      cursor_for_entries_after: _cursor_for_entries_after,
+      has_more_entries: false
+    } = pagination
+
+    assert ["John", "Lee", "Rich"] = paginated_entries |> Enum.map(& &1.nickname)
+
+    %{paginated_entries: paginated_entries, pagination: pagination} =
+      QueryBuilder.paginate(query, Repo, page_size: 3, cursor: cursor_for_entries_before, direction: :before)
+
+    assert %{
+      cursor_direction: :before,
+      cursor_for_entries_before: cursor_for_entries_before,
+      cursor_for_entries_after: _cursor_for_entries_after,
+      has_more_entries: true
+    } = pagination
+
+    assert ["Dave", "Eric", "James"] = paginated_entries |> Enum.map(& &1.nickname)
+
+    %{paginated_entries: paginated_entries, pagination: pagination} =
+      QueryBuilder.paginate(query, Repo, page_size: 3, cursor: cursor_for_entries_before, direction: :before)
+
+    assert %{
+      cursor_direction: :before,
+      cursor_for_entries_before: _cursor_for_entries_before,
+      cursor_for_entries_after: _cursor_for_entries_after,
+      has_more_entries: false
+    } = pagination
+
+    assert ["Alice", "Bobby", "Calvin"] = paginated_entries |> Enum.map(& &1.nickname)
+  end
+
   test "limit" do
     all_users_but_bob =
       User
@@ -506,6 +590,12 @@ defmodule QueryBuilderTest do
       |> Repo.all()
 
     assert 3 == length(three_users_not_bob)
+
+    query = from u in User, limit: 4
+    query = from u in query, limit: 3
+    query = from u in query, limit: 2
+    entries = Repo.all(query)
+    assert 2 == length(entries)
 
     two_users_not_bob =
       User
