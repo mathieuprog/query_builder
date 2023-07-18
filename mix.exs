@@ -31,6 +31,7 @@ defmodule QueryBuilder.MixProject do
 
   defp deps do
     [
+      {:jason, "~> 1.4"},
       {:ecto, "~> 3.5"},
       {:ecto_sql, "~> 3.5", only: :test},
       {:postgrex, "~> 0.14", only: :test},
