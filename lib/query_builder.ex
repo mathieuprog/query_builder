@@ -15,7 +15,7 @@ defmodule QueryBuilder do
 
   def paginate(%QueryBuilder.Query{} = query, repo, opts \\ []) do
     page_size = Keyword.get(opts, :page_size, 100)
-    cursor_direction = Keyword.fetch!(opts, :direction)
+    cursor_direction = Keyword.get(opts, :direction, :after)
 
     cursor =
       case Keyword.get(opts, :cursor) || %{} do
