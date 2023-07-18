@@ -1,4 +1,4 @@
-use Mix.Config
+import Config
 
 config :logger, level: :warn # set to :debug to view SQL queries in logs
 
