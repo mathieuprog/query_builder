@@ -127,6 +127,12 @@ User
 |> QueryBuilder.paginate(Repo, page_size: 10, cursor: cursor_for_entries_after, direction: :after)
 ```
 
+You may configure a global default page size via config:
+
+```elixir
+config :query_builder, :default_page_size, 100
+```
+
 `QueryBuilder.where/2`
 
 ```elixir
@@ -307,13 +313,13 @@ defmodule MyApp.Accounts.User do
 end
 
 defmodule MyApp.Accounts do
-  alias MyApp.QueryBuilder, as: QB
+  alias MyApp.QueryBuilder, as: Query
 
   def list_users(opts \\ []) do
     # Query list can include custom query functions as well:
     # [where_initcap: {:name, "john"}, where: {:active, true}]
     MyApp.Accounts.User
-    |> QB.from_list(opts)
+    |> Query.from_list(opts)
     |> Repo.all()
   end
 end
