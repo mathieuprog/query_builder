@@ -207,6 +207,16 @@ QueryBuilder.order_by(query, asc: :lastname, asc: :firstname)
 ```elixir
 QueryBuilder.order_by(query, :articles, asc: :title@articles)
 ```
+```
+
+`QueryBuilder.maybe_order_by/3` and `QueryBuilder.maybe_order_by/4`
+
+```elixir
+query
+|> QueryBuilder.maybe_order_by(some_condition, asc: :lastname, asc: :firstname)
+```
+
+The above will run `order_by/2` if the given condition is met.
 
 `QueryBuilder.preload/2`
 
