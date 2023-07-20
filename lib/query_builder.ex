@@ -298,6 +298,24 @@ defmodule QueryBuilder do
   end
 
   @doc ~S"""
+  Run `QueryBuilder.order_by/2` only if given condition is met.
+  """
+  def maybe_order_by(query, true, value) do
+    order_by(query, [], value)
+  end
+
+  def maybe_order_by(query, false, _), do: query
+
+  @doc ~S"""
+  Run `QueryBuilder.order_by/3` only if given condition is met.
+  """
+  def maybe_order_by(query, true, assoc_fields, value) do
+    order_by(query, assoc_fields, value)
+  end
+
+  def maybe_order_by(query, false, _, _), do: query
+
+  @doc ~S"""
   A limit query expression.
   If multiple limit expressions are provided, the last expression is evaluated
 
