@@ -575,6 +575,14 @@ defmodule QueryBuilderTest do
     assert ["Alice", "Bobby", "Calvin"] = paginated_entries |> Enum.map(& &1.nickname)
   end
 
+  test "cursor pagination with invalid direction" do
+    query = QueryBuilder.order_by(User, asc: :nickname)
+
+    assert_raise ArgumentError, ~r/cursor direction/, fn ->
+      QueryBuilder.paginate(query, Repo, page_size: 3, direction: :invalid)
+    end
+  end
+
   test "limit" do
     all_users_but_bob =
       User
