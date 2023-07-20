@@ -17,6 +17,13 @@ defmodule QueryBuilder do
     page_size = Keyword.get(opts, :page_size, default_page_size())
     cursor_direction = Keyword.get(opts, :direction, :after)
 
+    page_size =
+      if max_page_size = Keyword.get(opts, :max_page_size) do
+        min(max_page_size, page_size)
+      else
+        page_size
+      end
+
     cursor =
       case Keyword.get(opts, :cursor) || %{} do
         cursor when is_map(cursor) ->
