@@ -17,6 +17,10 @@ defmodule QueryBuilder do
     page_size = Keyword.get(opts, :page_size, default_page_size())
     cursor_direction = Keyword.get(opts, :direction, :after)
 
+    unless cursor_direction in [:after, :before] do
+      raise ArgumentError, "cursor direction #{inspect cursor_direction} is invalid"
+    end
+
     page_size =
       if max_page_size = Keyword.get(opts, :max_page_size) do
         min(max_page_size, page_size)
