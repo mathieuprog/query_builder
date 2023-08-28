@@ -6,6 +6,7 @@ config :query_builder,
   ecto_repos: [QueryBuilder.Repo]
 
 config :query_builder, QueryBuilder.Repo,
+  port: 5434,
   username: "postgres",
   password: "postgres",
   database: "query_builder_test",
