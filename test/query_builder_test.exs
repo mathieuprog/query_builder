@@ -521,7 +521,8 @@ defmodule QueryBuilderTest do
       cursor_direction: :after,
       cursor_for_entries_before: _cursor_for_entries_before,
       cursor_for_entries_after: cursor_for_entries_after,
-      has_more_entries: true
+      has_more_entries: true,
+      max_page_size: 3
     } = pagination
 
     assert ["Alice", "Bobby", "Calvin"] = paginated_entries |> Enum.map(& &1.nickname)
@@ -533,7 +534,8 @@ defmodule QueryBuilderTest do
       cursor_direction: :after,
       cursor_for_entries_before: _cursor_for_entries_before,
       cursor_for_entries_after: cursor_for_entries_after,
-      has_more_entries: true
+      has_more_entries: true,
+      max_page_size: 3
     } = pagination
 
     assert ["Dave", "Eric", "James"] = paginated_entries |> Enum.map(& &1.nickname)
@@ -545,7 +547,8 @@ defmodule QueryBuilderTest do
       cursor_direction: :after,
       cursor_for_entries_before: cursor_for_entries_before,
       cursor_for_entries_after: _cursor_for_entries_after,
-      has_more_entries: false
+      has_more_entries: false,
+      max_page_size: 3
     } = pagination
 
     assert ["John", "Lee", "Rich"] = paginated_entries |> Enum.map(& &1.nickname)
@@ -557,7 +560,8 @@ defmodule QueryBuilderTest do
       cursor_direction: :before,
       cursor_for_entries_before: cursor_for_entries_before,
       cursor_for_entries_after: _cursor_for_entries_after,
-      has_more_entries: true
+      has_more_entries: true,
+      max_page_size: 3
     } = pagination
 
     assert ["Dave", "Eric", "James"] = paginated_entries |> Enum.map(& &1.nickname)
@@ -569,7 +573,8 @@ defmodule QueryBuilderTest do
       cursor_direction: :before,
       cursor_for_entries_before: _cursor_for_entries_before,
       cursor_for_entries_after: _cursor_for_entries_after,
-      has_more_entries: false
+      has_more_entries: false,
+      max_page_size: 3
     } = pagination
 
     assert ["Alice", "Bobby", "Calvin"] = paginated_entries |> Enum.map(& &1.nickname)
