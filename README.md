@@ -110,15 +110,18 @@ Currently, supported operations are:
 `QueryBuilder.paginate/3`
 
 ```elixir
+%{paginated_entries: paginated_entries, pagination: pagination} =
+  User
+  |> QueryBuilder.order_by(asc: :nickname, desc: :email)
+  |> QueryBuilder.paginate(Repo, page_size: 10)
+
 %{
   cursor_direction: :after,
   cursor_for_entries_before: cursor_for_entries_before,
   cursor_for_entries_after: cursor_for_entries_after,
-  has_more_entries: has_more_entries?
-} =
-  User
-  |> QueryBuilder.order_by(asc: :nickname, desc: :email)
-  |> QueryBuilder.paginate(Repo, page_size: 10)
+  has_more_entries: has_more_entries?,
+  max_page_size: 10
+} = pagination
 
 # for subsequent request you may use the cursor:
 
