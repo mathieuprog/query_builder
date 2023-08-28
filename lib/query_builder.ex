@@ -178,7 +178,8 @@ defmodule QueryBuilder do
         cursor_direction: cursor_direction,
         cursor_for_entries_before: build_cursor.(first_entry),
         cursor_for_entries_after: build_cursor.(last_entry),
-        has_more_entries: has_more?
+        has_more_entries: has_more?,
+        max_page_size: page_size
       },
       paginated_entries: entries
     }
