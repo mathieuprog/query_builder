@@ -242,6 +242,10 @@ defmodule QueryBuilder do
   """
   def where(query, assoc_fields, filters, or_filters \\ [])
 
+  def where(%QueryBuilder.Query{} = query, _assoc_fields, [], []) do
+    query
+  end
+
   def where(%QueryBuilder.Query{} = query, assoc_fields, filters, or_filters) do
     %{query | operations: [%{type: :where, assocs: assoc_fields, args: [filters, or_filters]} | query.operations]}
   end
@@ -293,6 +297,10 @@ defmodule QueryBuilder do
   QueryBuilder.order_by(query, :articles, asc: :title@articles)
   ```
   """
+  def order_by(%QueryBuilder.Query{} = query, _assoc_fields, []) do
+    query
+  end
+
   def order_by(%QueryBuilder.Query{} = query, assoc_fields, value) do
     %{query | operations: [%{type: :order_by, assocs: assoc_fields, args: [value]} | query.operations]}
   end

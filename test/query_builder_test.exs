@@ -228,6 +228,22 @@ defmodule QueryBuilderTest do
     assert 2 == length(articles_excluding_tags)
   end
 
+  test "empty where" do
+    all_users =
+      User
+      |> QueryBuilder.where([])
+      |> Repo.all()
+
+    assert 9 == length(all_users)
+
+    result =
+      User
+      |> QueryBuilder.where([], [], or: [name: "Bob", deleted: false])
+      |> Repo.all()
+
+    assert 1 == length(result)
+  end
+
   test "where with or groups" do
     result =
       User
@@ -424,6 +440,15 @@ defmodule QueryBuilderTest do
       |> Repo.one!()
 
     assert hd(alice.authored_articles).title == "MINT, A NEW HTTP CLIENT FOR ELIXIR"
+  end
+
+  test "empty order_by" do
+    all_users =
+      User
+      |> QueryBuilder.order_by([])
+      |> Repo.all()
+
+    assert 9 == length(all_users)
   end
 
   test "order_by with fragment" do
