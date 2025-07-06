@@ -355,6 +355,20 @@ select * from users where users.name = users.nickname
 ```
 
 
+## Testing
+
+To run the test suite, you need PostgreSQL installed and running. The test database will be created automatically.
+
+```bash
+mix test
+```
+
+The test suite uses PostgreSQL with default configuration (localhost:5432). You can override settings using environment variables:
+
+```bash
+POSTGRES_PORT=5433 mix test
+```
+
 ## Installation
 
 Add `query_builder` for Elixir as a dependency in your `mix.exs` file:
