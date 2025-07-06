@@ -17,9 +17,15 @@ defmodule QueryBuilder.JoinMaker do
   end
 
   defp do_make_joins(ecto_query, [], _, new_assoc_list, _original_assoc_list),
-       do: {ecto_query, new_assoc_list}
+    do: {ecto_query, new_assoc_list}
 
-  defp do_make_joins(ecto_query, [assoc_data | tail], bindings, new_assoc_list, original_assoc_list) do
+  defp do_make_joins(
+         ecto_query,
+         [assoc_data | tail],
+         bindings,
+         new_assoc_list,
+         original_assoc_list
+       ) do
     {ecto_query, assoc_data, bindings} =
       maybe_join(ecto_query, assoc_data, bindings, original_assoc_list)
 
@@ -38,8 +44,13 @@ defmodule QueryBuilder.JoinMaker do
     {ecto_query, [assoc_data | new_assoc_list]}
   end
 
-  defp maybe_join(ecto_query, %{cardinality: :many, join_type: :inner_if_cardinality_is_one} = assoc_data, bindings, _original_assoc_list),
-    do: {ecto_query, assoc_data, bindings}
+  defp maybe_join(
+         ecto_query,
+         %{cardinality: :many, join_type: :inner_if_cardinality_is_one} = assoc_data,
+         bindings,
+         _original_assoc_list
+       ),
+       do: {ecto_query, assoc_data, bindings}
 
   defp maybe_join(ecto_query, assoc_data, bindings, original_assoc_list) do
     %{
@@ -50,6 +61,7 @@ defmodule QueryBuilder.JoinMaker do
       assoc_schema: assoc_schema,
       join_type: join_type
     } = assoc_data
+
     if Ecto.Query.has_named_binding?(ecto_query, assoc_binding) do
       raise "has already joined"
     end
@@ -60,7 +72,12 @@ defmodule QueryBuilder.JoinMaker do
       if assoc_data.join_filters != [] do
         assoc_data.join_filters
         |> Enum.map(fn [filters, or_filters] ->
-          QueryBuilder.Query.Where.build_dynamic_query(ecto_query, original_assoc_list, filters, or_filters)
+          QueryBuilder.Query.Where.build_dynamic_query(
+            ecto_query,
+            original_assoc_list,
+            filters,
+            or_filters
+          )
         end)
         |> Enum.reduce(&Ecto.Query.dynamic(^&1 and ^&2))
       else

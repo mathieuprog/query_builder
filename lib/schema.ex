@@ -63,7 +63,7 @@ defmodule QueryBuilder.Schema do
           end
 
           def _binding(unquote(assoc_field)),
-              do: unquote(binding)
+            do: unquote(binding)
         end
       end,
       quote do

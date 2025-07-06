@@ -63,7 +63,7 @@ defmodule QueryBuilder.Query.Where do
   end
 
   defp apply_filter(query, assoc_list, custom_fun) when is_function(custom_fun) do
-    custom_fun.(&(find_field_and_binding_from_token(query, assoc_list, &1)))
+    custom_fun.(&find_field_and_binding_from_token(query, assoc_list, &1))
   end
 
   defp do_where(binding, {field, :in, values, []}) when is_list(values) do
@@ -102,7 +102,8 @@ defmodule QueryBuilder.Query.Where do
     Ecto.Query.dynamic([{^binding, x}], field(x, ^field) > ^value)
   end
 
-  defp do_where(binding, {field, operator, value, []}) when operator in [:ge, :greater_than_or_equal_to] do
+  defp do_where(binding, {field, operator, value, []})
+       when operator in [:ge, :greater_than_or_equal_to] do
     Ecto.Query.dynamic([{^binding, x}], field(x, ^field) >= ^value)
   end
 
@@ -110,7 +111,8 @@ defmodule QueryBuilder.Query.Where do
     Ecto.Query.dynamic([{^binding, x}], field(x, ^field) < ^value)
   end
 
-  defp do_where(binding, {field, operator, value, []}) when operator in [:le, :less_than_or_equal_to] do
+  defp do_where(binding, {field, operator, value, []})
+       when operator in [:le, :less_than_or_equal_to] do
     Ecto.Query.dynamic([{^binding, x}], field(x, ^field) <= ^value)
   end
 
@@ -157,7 +159,8 @@ defmodule QueryBuilder.Query.Where do
     Ecto.Query.dynamic([{^b1, x}, {^b2, y}], field(x, ^f1) > field(y, ^f2))
   end
 
-  defp do_where(b1, b2, {f1, operator, f2, []}) when operator in [:ge, :greater_than_or_equal_to] do
+  defp do_where(b1, b2, {f1, operator, f2, []})
+       when operator in [:ge, :greater_than_or_equal_to] do
     Ecto.Query.dynamic([{^b1, x}, {^b2, y}], field(x, ^f1) >= field(y, ^f2))
   end
 
@@ -175,21 +178,43 @@ defmodule QueryBuilder.Query.Where do
       :sensitive ->
         case search_operation do
           :starts_with ->
-            Ecto.Query.dynamic([{^b1, x}, {^b2, y}], fragment("? like concat(?, '%')", field(x, ^f1), field(y, ^f2)))
+            Ecto.Query.dynamic(
+              [{^b1, x}, {^b2, y}],
+              fragment("? like concat(?, '%')", field(x, ^f1), field(y, ^f2))
+            )
+
           :ends_with ->
-            Ecto.Query.dynamic([{^b1, x}, {^b2, y}], fragment("? like concat('%', ?)", field(x, ^f1), field(y, ^f2)))
+            Ecto.Query.dynamic(
+              [{^b1, x}, {^b2, y}],
+              fragment("? like concat('%', ?)", field(x, ^f1), field(y, ^f2))
+            )
+
           :contains ->
-            Ecto.Query.dynamic([{^b1, x}, {^b2, y}], fragment("? like concat('%', ?, '%')", field(x, ^f1), field(y, ^f2)))
+            Ecto.Query.dynamic(
+              [{^b1, x}, {^b2, y}],
+              fragment("? like concat('%', ?, '%')", field(x, ^f1), field(y, ^f2))
+            )
         end
 
       case_sensitivity when case_sensitivity in [:insensitive, :i] ->
         case search_operation do
           :starts_with ->
-            Ecto.Query.dynamic([{^b1, x}, {^b2, y}], fragment("? ilike concat(?, '%')", field(x, ^f1), field(y, ^f2)))
+            Ecto.Query.dynamic(
+              [{^b1, x}, {^b2, y}],
+              fragment("? ilike concat(?, '%')", field(x, ^f1), field(y, ^f2))
+            )
+
           :ends_with ->
-            Ecto.Query.dynamic([{^b1, x}, {^b2, y}], fragment("? ilike concat('%', ?)", field(x, ^f1), field(y, ^f2)))
+            Ecto.Query.dynamic(
+              [{^b1, x}, {^b2, y}],
+              fragment("? ilike concat('%', ?)", field(x, ^f1), field(y, ^f2))
+            )
+
           :contains ->
-            Ecto.Query.dynamic([{^b1, x}, {^b2, y}], fragment("? ilike concat('%', ?, '%')", field(x, ^f1), field(y, ^f2)))
+            Ecto.Query.dynamic(
+              [{^b1, x}, {^b2, y}],
+              fragment("? ilike concat('%', ?, '%')", field(x, ^f1), field(y, ^f2))
+            )
         end
     end
   end

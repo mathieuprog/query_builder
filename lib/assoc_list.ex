@@ -72,10 +72,13 @@ defmodule QueryBuilder.AssocList do
     Enum.reduce(assoc_list, [], fn assoc_data, new_assoc_list ->
       new_assoc_list
       |> Enum.with_index()
-      |> Enum.find(fn {acc_assoc_data, _index} -> acc_assoc_data.assoc_binding == assoc_data.assoc_binding end)
+      |> Enum.find(fn {acc_assoc_data, _index} ->
+        acc_assoc_data.assoc_binding == assoc_data.assoc_binding
+      end)
       |> case do
         {acc_assoc_data, index} ->
-          nested_assocs = merge_assoc_data(acc_assoc_data.nested_assocs ++ assoc_data.nested_assocs)
+          nested_assocs =
+            merge_assoc_data(acc_assoc_data.nested_assocs ++ assoc_data.nested_assocs)
 
           join_type =
             cond do
@@ -92,7 +95,7 @@ defmodule QueryBuilder.AssocList do
           preload = acc_assoc_data.preload || assoc_data.preload
 
           join_filters =
-            acc_assoc_data.join_filters ++ assoc_data.join_filters
+            (acc_assoc_data.join_filters ++ assoc_data.join_filters)
             |> Enum.uniq()
             |> Enum.reject(&(&1 == []))
 
@@ -120,6 +123,10 @@ defmodule QueryBuilder.AssocList do
       bindings: bindings
     } = state
 
+    # Convert string association fields to atoms
+    assoc_field =
+      if is_binary(assoc_field), do: String.to_existing_atom(assoc_field), else: assoc_field
+
     {join_type, join_filters} =
       case Keyword.get(opts, :join, :inner) do
         :left ->
@@ -142,7 +149,16 @@ defmodule QueryBuilder.AssocList do
     preload = Keyword.get(opts, :preload, false)
     authorizer = Keyword.get(opts, :authorizer, nil)
 
-    assoc_data = assoc_data(source_binding, source_schema, assoc_field, join_type, preload, join_filters, authorizer)
+    assoc_data =
+      assoc_data(
+        source_binding,
+        source_schema,
+        assoc_field,
+        join_type,
+        preload,
+        join_filters,
+        authorizer
+      )
 
     %{
       assoc_binding: assoc_binding,
@@ -155,21 +171,38 @@ defmodule QueryBuilder.AssocList do
       %{
         assoc_data
         | nested_assocs:
-            do_build([], List.wrap(nested_assoc_fields), %{
-              state
-              | source_binding: assoc_binding,
-                source_schema: assoc_schema
-            }, opts)
+            do_build(
+              [],
+              List.wrap(nested_assoc_fields),
+              %{
+                state
+                | source_binding: assoc_binding,
+                  source_schema: assoc_schema
+              },
+              opts
+            )
       }
 
     do_build([assoc_data | assoc_list], tail, state, opts)
   end
 
   defp do_build(assoc_list, [assoc_field | tail], state, opts) do
+    # Convert string to atom if needed before delegating
+    assoc_field =
+      if is_binary(assoc_field), do: String.to_existing_atom(assoc_field), else: assoc_field
+
     do_build(assoc_list, [{assoc_field, []} | tail], state, opts)
   end
 
-  defp assoc_data(source_binding, source_schema, assoc_field, join_type, preload, join_filters, authorizer) do
+  defp assoc_data(
+         source_binding,
+         source_schema,
+         assoc_field,
+         join_type,
+         preload,
+         join_filters,
+         authorizer
+       ) do
     assoc_schema = assoc_schema(source_schema, assoc_field)
     cardinality = assoc_cardinality(source_schema, assoc_field)
 
@@ -181,25 +214,26 @@ defmodule QueryBuilder.AssocList do
       end
 
     {join_type, auth_z_join_filters} =
-      case authorizer && authorizer.reject_unauthorized_assoc(source_schema, {assoc_field, assoc_schema}) do
+      case authorizer &&
+             authorizer.reject_unauthorized_assoc(source_schema, {assoc_field, assoc_schema}) do
         %{join: join, on: on, or_on: or_on} ->
           {cond do
-            join == :left || join_type == :left -> :left
-            true -> :inner
-          end, [List.wrap(on), [or: List.wrap(or_on)]]}
+             join == :left || join_type == :left -> :left
+             true -> :inner
+           end, [List.wrap(on), [or: List.wrap(or_on)]]}
 
         %{join: join, on: on} ->
           {cond do
-            join == :left || join_type == :left -> :left
-            true -> :inner
-          end, [List.wrap(on), [or: []]]}
+             join == :left || join_type == :left -> :left
+             true -> :inner
+           end, [List.wrap(on), [or: []]]}
 
         nil ->
           {join_type, []}
       end
 
     join_filters =
-      [join_filters] ++ [auth_z_join_filters]
+      ([join_filters] ++ [auth_z_join_filters])
       |> Enum.reject(&(&1 == []))
 
     %{

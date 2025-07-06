@@ -18,7 +18,7 @@ defmodule QueryBuilder do
     cursor_direction = Keyword.get(opts, :direction, :after)
 
     unless cursor_direction in [:after, :before] do
-      raise ArgumentError, "cursor direction #{inspect cursor_direction} is invalid"
+      raise ArgumentError, "cursor direction #{inspect(cursor_direction)} is invalid"
     end
 
     page_size =
@@ -36,7 +36,7 @@ defmodule QueryBuilder do
         cursor ->
           with {:ok, decoded_string} <- Base.url_decode64(cursor),
                {:ok, cursor} <- Jason.decode(decoded_string) do
-              cursor
+            cursor
           else
             _ -> %{}
           end
@@ -94,16 +94,21 @@ defmodule QueryBuilder do
       |> Enum.filter(&match?(%{type: :order_by}, &1))
       |> Enum.reverse()
       |> Enum.flat_map(&Map.fetch!(&1, :args))
-      |> Enum.flat_map(&Enum.reject(&1, fn {_direction, field} -> String.contains?(to_string(field), "@") end))
+      |> Enum.flat_map(
+        &Enum.reject(&1, fn {_direction, field} -> String.contains?(to_string(field), "@") end)
+      )
       |> Enum.uniq_by(fn {_direction, field} -> field end)
 
     cursor_fields = Map.keys(cursor)
-    valid_cursor? = Enum.all?(Keyword.values(order_by_list), &Enum.member?(cursor_fields, to_string(&1)))
+
+    valid_cursor? =
+      Enum.all?(Keyword.values(order_by_list), &Enum.member?(cursor_fields, to_string(&1)))
 
     query =
       if valid_cursor? do
         {_, filters} =
-          Enum.reduce(order_by_list, {[], []}, fn {order_direction, field}, {prev_fields, filters} ->
+          Enum.reduce(order_by_list, {[], []}, fn {order_direction, field},
+                                                  {prev_fields, filters} ->
             operator =
               cond do
                 order_direction == :desc && cursor_direction == :after ->
@@ -247,7 +252,12 @@ defmodule QueryBuilder do
   end
 
   def where(%QueryBuilder.Query{} = query, assoc_fields, filters, or_filters) do
-    %{query | operations: [%{type: :where, assocs: assoc_fields, args: [filters, or_filters]} | query.operations]}
+    %{
+      query
+      | operations: [
+          %{type: :where, assocs: assoc_fields, args: [filters, or_filters]} | query.operations
+        ]
+    }
   end
 
   def where(ecto_query, assoc_fields, filters, or_filters) do
@@ -302,7 +312,10 @@ defmodule QueryBuilder do
   end
 
   def order_by(%QueryBuilder.Query{} = query, assoc_fields, value) do
-    %{query | operations: [%{type: :order_by, assocs: assoc_fields, args: [value]} | query.operations]}
+    %{
+      query
+      | operations: [%{type: :order_by, assocs: assoc_fields, args: [value]} | query.operations]
+    }
   end
 
   def order_by(ecto_query, assoc_fields, value) do
@@ -367,6 +380,158 @@ defmodule QueryBuilder do
   end
 
   @doc ~S"""
+  A select query expression.
+
+  Specifies which fields will be selected from the schema. If no select is given,
+  the entire schema is returned.
+
+  ## Examples
+
+  Select specific fields as a list (returns struct with only those fields):
+  ```
+  QueryBuilder.select(query, [:id, :name])
+  ```
+
+  Select fields and rename them using a map:
+  ```
+  QueryBuilder.select(query, %{user_id: :id, user_name: :name})
+  ```
+
+  Select fields as a tuple:
+  ```
+  QueryBuilder.select(query, {:id, :name})
+  ```
+
+  Select a single field:
+  ```
+  QueryBuilder.select(query, :name)
+  ```
+
+  Select with string field names:
+  ```
+  QueryBuilder.select(query, ["id", "name"])
+  ```
+  """
+  def select(query, selection) do
+    select(query, [], selection)
+  end
+
+  @doc ~S"""
+  A select query expression with associations.
+
+  Similar to `select/2` but allows selecting fields from associations. 
+  Association fields are referenced using the `@` syntax.
+
+  For more about the second argument, see `where/3`.
+
+  ## Examples
+
+  Select fields from an association:
+  ```
+  QueryBuilder.select(query, :articles, [:id, :title@articles])
+  ```
+
+  Select and rename association fields:
+  ```
+  QueryBuilder.select(query, :role, %{
+    user_id: :id,
+    user_name: :name,
+    role_name: :name@role
+  })
+  ```
+  """
+  def select(%QueryBuilder.Query{} = query, assoc_fields, selection) do
+    %{
+      query
+      | operations: [%{type: :select, assocs: assoc_fields, args: [selection]} | query.operations]
+    }
+  end
+
+  def select(ecto_query, assoc_fields, selection) do
+    ecto_query = ensure_query_has_binding(ecto_query)
+    select(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields, selection)
+  end
+
+  @doc ~S"""
+  A select merge query expression.
+
+  Merges new fields into existing selections. Unlike `select/2`, which replaces
+  any previous selection, `select_merge/2` adds to the existing selection.
+
+  If no previous selection exists, it defaults to selecting all fields from
+  the source schema.
+
+  ## Examples
+
+  Merge additional fields:
+  ```
+  query
+  |> QueryBuilder.select(%{id: :id})
+  |> QueryBuilder.select_merge(%{name: :name})
+  ```
+
+  Add computed fields:
+  ```
+  QueryBuilder.select_merge(query, %{
+    total_comments: fragment("count(?)", c.id)
+  })
+  ```
+
+  Merge a single field:
+  ```
+  QueryBuilder.select_merge(query, :email)
+  ```
+
+  Merge a list of fields:
+  ```
+  QueryBuilder.select_merge(query, [:created_at, :updated_at])
+  ```
+  """
+  def select_merge(query, selection) do
+    select_merge(query, [], selection)
+  end
+
+  @doc ~S"""
+  A select merge query expression with associations.
+
+  Similar to `select_merge/2` but allows merging fields from associations.
+  Association fields are referenced using the `@` syntax.
+
+  For more about the second argument, see `where/3`.
+
+  ## Examples
+
+  Merge association fields:
+  ```
+  QueryBuilder.select_merge(query, :articles, %{
+    article_title: :title@articles,
+    article_id: :id@articles
+  })
+  ```
+
+  Build complex selections incrementally:
+  ```
+  query
+  |> QueryBuilder.select(:role, %{user_id: :id})
+  |> QueryBuilder.select_merge(:role, %{role_name: :name@role})
+  |> QueryBuilder.select_merge([:articles], %{article_count: fragment("count(?)", a.id)})
+  ```
+  """
+  def select_merge(%QueryBuilder.Query{} = query, assoc_fields, selection) do
+    %{
+      query
+      | operations: [
+          %{type: :select_merge, assocs: assoc_fields, args: [selection]} | query.operations
+        ]
+    }
+  end
+
+  def select_merge(ecto_query, assoc_fields, selection) do
+    ecto_query = ensure_query_has_binding(ecto_query)
+    select_merge(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields, selection)
+  end
+
+  @doc ~S"""
   A join query expression.
 
   Example:
@@ -377,7 +542,17 @@ defmodule QueryBuilder do
   def left_join(query, assoc_fields, filters \\ [], or_filters \\ [])
 
   def left_join(%QueryBuilder.Query{} = query, assoc_fields, filters, or_filters) do
-    %{query | operations: [%{type: :left_join, assocs: assoc_fields, join_filters: [List.wrap(filters), List.wrap(or_filters)]} | query.operations]}
+    %{
+      query
+      | operations: [
+          %{
+            type: :left_join,
+            assocs: assoc_fields,
+            join_filters: [List.wrap(filters), List.wrap(or_filters)]
+          }
+          | query.operations
+        ]
+    }
   end
 
   def left_join(ecto_query, assoc_fields, filters, or_filters) do

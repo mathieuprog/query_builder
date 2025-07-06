@@ -64,10 +64,10 @@ defmodule QueryBuilder.Extension do
       defdelegate maybe_where(query, condition, assoc_fields, filters, or_filters \\ []),
         to: QueryBuilder
 
-        defdelegate maybe_order_by(query, bool, value), to: QueryBuilder
+      defdelegate maybe_order_by(query, bool, value), to: QueryBuilder
 
-        defdelegate maybe_order_by(query, condition, assoc_fields, value),
-          to: QueryBuilder
+      defdelegate maybe_order_by(query, condition, assoc_fields, value),
+        to: QueryBuilder
 
       defdelegate new(ecto_query), to: QueryBuilder
       defdelegate paginate(query, repo, opts \\ []), to: QueryBuilder
@@ -78,6 +78,10 @@ defmodule QueryBuilder.Extension do
       defdelegate where(query, assoc_fields, filters, or_filters \\ []), to: QueryBuilder
       defdelegate offset(query, value), to: QueryBuilder
       defdelegate limit(query, value), to: QueryBuilder
+      defdelegate select(query, selection), to: QueryBuilder
+      defdelegate select(query, assoc_fields, selection), to: QueryBuilder
+      defdelegate select_merge(query, selection), to: QueryBuilder
+      defdelegate select_merge(query, assoc_fields, selection), to: QueryBuilder
 
       @doc ~S"""
       Allows to pass a list of operations through a keyword list.

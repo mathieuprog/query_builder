@@ -1,6 +1,7 @@
 import Config
 
-config :logger, level: :warning # set to :debug to view SQL queries in logs
+# set to :debug to view SQL queries in logs
+config :logger, level: :warning
 
 config :query_builder,
   ecto_repos: [QueryBuilder.Repo]

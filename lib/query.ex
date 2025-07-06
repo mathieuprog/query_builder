@@ -30,7 +30,8 @@ defimpl Ecto.Queryable, for: QueryBuilder.Query do
     operations = Enum.reverse(operations)
 
     assoc_list =
-      Enum.reduce(operations, [], fn %{assocs: assocs, type: type} = operation, accumulated_assocs ->
+      Enum.reduce(operations, [], fn %{assocs: assocs, type: type} = operation,
+                                     accumulated_assocs ->
         opts =
           case type do
             :preload ->

@@ -244,11 +244,57 @@ QueryBuilder.offset(query, 10)
 QueryBuilder.limit(query, 10)
 ```
 
+`QueryBuilder.select/2`
+
+```elixir
+QueryBuilder.select(query, [:id, :name, :email])
+```
+
+```elixir
+QueryBuilder.select(query, %{user_id: :id, user_name: :name})
+```
+
+Select a single field:
+
+```elixir
+QueryBuilder.select(query, :name)
+```
+
+`QueryBuilder.select/3`
+
+```elixir
+QueryBuilder.select(query, :role, [:id, :name, :name@role])
+```
+
+```elixir
+QueryBuilder.select(query, [:articles, :author], %{
+  article_title: :title@articles,
+  author_name: :name@author
+})
+```
+
+`QueryBuilder.select_merge/2`
+
+```elixir
+query
+|> QueryBuilder.select(%{id: :id})
+|> QueryBuilder.select_merge(%{name: :name, email: :email})
+```
+
+`QueryBuilder.select_merge/3`
+
+```elixir
+query
+|> QueryBuilder.select(:role, %{user_id: :id})
+|> QueryBuilder.select_merge(:role, %{role_name: :name@role})
+```
+
 `QueryBuilder.from_list/2`
 
 ```elixir
 QueryBuilder.from_list(query, [
   where: [name: "John", city: "Anytown"],
+  select: [:id, :name, :email],
   preload: [articles: :comments],
   order_by: {:articles, asc: :title@articles},
   limit: 20,

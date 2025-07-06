@@ -15,7 +15,7 @@ defmodule QueryBuilder.Query.OrderBy do
     |> Enum.filter(&(&1 != []))
     |> Enum.map(fn
       {direction, custom_fun} when is_function(custom_fun) ->
-        {direction, custom_fun.(&(find_field_and_binding_from_token(ecto_query, assoc_list, &1)))}
+        {direction, custom_fun.(&find_field_and_binding_from_token(ecto_query, assoc_list, &1))}
 
       {direction, field} ->
         {field, binding} = find_field_and_binding_from_token(ecto_query, assoc_list, field)
