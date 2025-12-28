@@ -32,14 +32,14 @@ defmodule QueryBuilder.MixProject do
   defp deps do
     [
       {:jason, "~> 1.4"},
-      {:ecto, "~> 3.10"},
-      {:ecto_sql, "~> 3.10", only: :test},
-      {:postgrex, "~> 0.17", only: :test},
-      {:ex_machina, "~> 2.7", only: :test},
+      {:ecto, "~> 3.13"},
+      {:ecto_sql, "~> 3.13", only: :test},
+      {:postgrex, "~> 0.21", only: :test},
+      {:ex_machina, "~> 2.8", only: :test},
       {:map_diff, "~> 1.3", only: :test},
-      {:ex_doc, "~> 0.30", only: :dev},
-      {:inch_ex, "~> 2.0", only: :dev},
-      {:dialyxir, "~> 1.3", only: :dev}
+      {:ex_doc, "~> 0.39", only: :dev},
+      {:inch_ex, "~> 2.1", only: :dev},
+      {:dialyxir, "~> 1.4", only: :dev}
     ]
   end
 
