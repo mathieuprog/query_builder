@@ -1,12 +1,13 @@
 import Config
 
-config :logger, level: :warn # set to :debug to view SQL queries in logs
+# set to :debug to view SQL queries in logs
+config :logger, level: :warning
 
 config :query_builder,
   ecto_repos: [QueryBuilder.Repo]
 
 config :query_builder, QueryBuilder.Repo,
-  port: 5434,
+  port: 5432,
   username: "postgres",
   password: "postgres",
   database: "query_builder_test",
