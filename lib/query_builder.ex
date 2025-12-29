@@ -382,6 +382,7 @@ defmodule QueryBuilder do
   end
 
   def limit(ecto_query, value) do
+    ecto_query = ensure_query_has_binding(ecto_query)
     limit(%QueryBuilder.Query{ecto_query: ecto_query}, value)
   end
 
@@ -401,6 +402,7 @@ defmodule QueryBuilder do
   end
 
   def offset(ecto_query, value) do
+    ecto_query = ensure_query_has_binding(ecto_query)
     offset(%QueryBuilder.Query{ecto_query: ecto_query}, value)
   end
 
