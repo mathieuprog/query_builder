@@ -687,10 +687,10 @@ defmodule QueryBuilderTest do
     assert all_users_count - 2 == users_minus_two_count
   end
 
-  test "from list" do
+  test "from_opts" do
     alice =
       User
-      |> QueryBuilder.from_list(
+      |> QueryBuilder.from_opts(
         where: [{:email, :equal_to, "alice@example.com"}],
         where: [name: "Alice", nickname: "Alice"],
         where: {[role: :permissions], name@permissions: "write"},
@@ -703,13 +703,13 @@ defmodule QueryBuilderTest do
 
     not_bob_count =
       User
-      |> QueryBuilder.from_list(where: [{:name, :ne, "Bob"}])
+      |> QueryBuilder.from_opts(where: [{:name, :ne, "Bob"}])
       |> Repo.all()
       |> length()
 
     skip_two_not_bob =
       User
-      |> QueryBuilder.from_list(
+      |> QueryBuilder.from_opts(
         where: [{:name, :ne, "Bob"}],
         offset: 2
       )
@@ -719,7 +719,7 @@ defmodule QueryBuilderTest do
 
     only_three_not_bob =
       User
-      |> QueryBuilder.from_list(
+      |> QueryBuilder.from_opts(
         where: [{:name, :ne, "Bob"}],
         limit: 3
       )
@@ -729,7 +729,7 @@ defmodule QueryBuilderTest do
 
     skip_two_only_one_not_bob =
       User
-      |> QueryBuilder.from_list(
+      |> QueryBuilder.from_opts(
         where: [{:name, :ne, "Bob"}],
         offset: 2,
         limit: 1
@@ -748,10 +748,10 @@ defmodule QueryBuilderTest do
 
     assert 1 == length(alice)
 
-    # Test from_list
+    # Test from_opts
     alice =
       User
-      |> CustomQueryBuilder.from_list(
+      |> CustomQueryBuilder.from_opts(
         where_initcap: {:name, "alice"},
         where: {[role: :permissions], name@permissions: "write"},
         order_by: {:authored_articles, asc: :title@authored_articles},
@@ -760,5 +760,11 @@ defmodule QueryBuilderTest do
       |> Repo.one!()
 
     assert hd(alice.authored_articles).title == "ELIXIR V1.9 RELEASED"
+  end
+
+  test "from_list raises and points to from_opts" do
+    assert_raise ArgumentError, ~r/from_opts\/2/, fn ->
+      QueryBuilder.from_list(User, where: [name: "Alice"])
+    end
   end
 end

@@ -430,16 +430,16 @@ defmodule QueryBuilder do
 
   Example:
   ```
-  QueryBuilder.from_list(query, [
+  QueryBuilder.from_opts(query, [
     where: [name: "John", city: "Anytown"],
     preload: [articles: :comments]
   ])
   ```
   """
-  def from_list(query, nil), do: query
-  def from_list(query, []), do: query
+  def from_opts(query, nil), do: query
+  def from_opts(query, []), do: query
 
-  def from_list(query, [{operation, arguments} | tail]) do
+  def from_opts(query, [{operation, arguments} | tail]) do
     arguments =
       cond do
         is_tuple(arguments) -> Tuple.to_list(arguments)
@@ -458,11 +458,16 @@ defmodule QueryBuilder do
         |> Enum.join(", ")
 
       raise ArgumentError,
-            "unknown from_list operation #{inspect(operation)}/#{arity}; " <>
+            "unknown operation #{inspect(operation)}/#{arity} in from_opts/2; " <>
               "expected a public function on #{inspect(__MODULE__)}. Available operations: #{available}"
     end
 
-    apply(__MODULE__, operation, [query | arguments]) |> from_list(tail)
+    apply(__MODULE__, operation, [query | arguments]) |> from_opts(tail)
+  end
+
+  def from_list(_query, _opts) do
+    raise ArgumentError,
+          "from_list/2 was renamed to from_opts/2; please update your call sites"
   end
 
   defp ensure_query_has_binding(query) do
