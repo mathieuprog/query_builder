@@ -101,8 +101,22 @@ defmodule QueryBuilder.Extension do
             true -> List.wrap(arguments)
           end
 
-        apply(__MODULE__, operation, [query | arguments])
-        |> from_list(tail)
+        arity = 1 + length(arguments)
+
+        unless function_exported?(__MODULE__, operation, arity) do
+          available =
+            __MODULE__.__info__(:functions)
+            |> Enum.map(&elem(&1, 0))
+            |> Enum.uniq()
+            |> Enum.sort()
+            |> Enum.join(", ")
+
+          raise ArgumentError,
+                "unknown from_list operation #{inspect(operation)}/#{arity}; " <>
+                  "expected a public function on #{inspect(__MODULE__)}. Available operations: #{available}"
+        end
+
+        apply(__MODULE__, operation, [query | arguments]) |> from_list(tail)
       end
     end
   end

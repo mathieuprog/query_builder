@@ -68,13 +68,28 @@ defmodule QueryBuilder do
           %{type: :order_by, args: [keyword_list]} = operation ->
             updated_keyword_list =
               Enum.map(keyword_list, fn {direction, field} ->
-                if String.contains?(to_string(field), "@") do
-                  {direction, field}
-                else
-                  case direction do
-                    :asc -> {:desc, field}
-                    :desc -> {:asc, field}
-                  end
+                cond do
+                  is_function(field) ->
+                    raise ArgumentError,
+                          "paginate/3 does not support custom order_by expressions when paging :before; got #{inspect(field)}"
+
+                  not (is_atom(field) or is_binary(field)) ->
+                    raise ArgumentError,
+                          "paginate/3 order_by fields must be atoms or strings; got #{inspect(field)}"
+
+                  String.contains?(to_string(field), "@") ->
+                    {direction, field}
+
+                  true ->
+                    case direction do
+                      :asc -> {:desc, field}
+                      :desc -> {:asc, field}
+
+                      other ->
+                        raise ArgumentError,
+                              "paginate/3 can't reverse order direction #{inspect(other)} for field #{inspect(field)} " <>
+                                "(supported: :asc, :desc)"
+                    end
                 end
               end)
 
@@ -94,7 +109,30 @@ defmodule QueryBuilder do
       |> Enum.filter(&match?(%{type: :order_by}, &1))
       |> Enum.reverse()
       |> Enum.flat_map(&Map.fetch!(&1, :args))
-      |> Enum.flat_map(&Enum.reject(&1, fn {_direction, field} -> String.contains?(to_string(field), "@") end))
+      |> Enum.flat_map(fn keyword_list ->
+        Enum.reject(keyword_list, fn {direction, field} ->
+          cond do
+            is_function(field) ->
+              raise ArgumentError,
+                    "paginate/3 does not support custom order_by expressions in cursor generation; " <>
+                      "got #{inspect(field)}"
+
+            not (is_atom(field) or is_binary(field)) ->
+              raise ArgumentError,
+                    "paginate/3 order_by fields must be atoms or strings; got #{inspect(field)}"
+
+            String.contains?(to_string(field), "@") ->
+              true
+
+            direction in [:asc, :desc] ->
+              false
+
+            true ->
+              raise ArgumentError,
+                    "paginate/3 supports only :asc/:desc for cursor fields; got #{inspect(direction)} for #{inspect(field)}"
+          end
+        end)
+      end)
       |> Enum.uniq_by(fn {_direction, field} -> field end)
 
     cursor_fields = Map.keys(cursor)
@@ -396,6 +434,7 @@ defmodule QueryBuilder do
   ])
   ```
   """
+  def from_list(query, nil), do: query
   def from_list(query, []), do: query
 
   def from_list(query, [{operation, arguments} | tail]) do
@@ -406,8 +445,22 @@ defmodule QueryBuilder do
         true -> List.wrap(arguments)
       end
 
-    apply(__MODULE__, operation, [query | arguments])
-    |> from_list(tail)
+    arity = 1 + length(arguments)
+
+    unless function_exported?(__MODULE__, operation, arity) do
+      available =
+        __MODULE__.__info__(:functions)
+        |> Enum.map(&elem(&1, 0))
+        |> Enum.uniq()
+        |> Enum.sort()
+        |> Enum.join(", ")
+
+      raise ArgumentError,
+            "unknown from_list operation #{inspect(operation)}/#{arity}; " <>
+              "expected a public function on #{inspect(__MODULE__)}. Available operations: #{available}"
+    end
+
+    apply(__MODULE__, operation, [query | arguments]) |> from_list(tail)
   end
 
   defp ensure_query_has_binding(query) do
