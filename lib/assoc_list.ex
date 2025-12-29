@@ -75,6 +75,16 @@ defmodule QueryBuilder.AssocList do
       |> Enum.find(fn {acc_assoc_data, _index} -> acc_assoc_data.assoc_binding == assoc_data.assoc_binding end)
       |> case do
         {acc_assoc_data, index} ->
+          if acc_assoc_data.assoc_field != assoc_data.assoc_field or
+               acc_assoc_data.source_schema != assoc_data.source_schema or
+               acc_assoc_data.assoc_schema != assoc_data.assoc_schema do
+            raise ArgumentError,
+                  "association binding collision for #{inspect(assoc_data.assoc_binding)}; " <>
+                    "it was generated for both #{inspect(acc_assoc_data.source_schema)}.#{inspect(acc_assoc_data.assoc_field)} " <>
+                    "and #{inspect(assoc_data.source_schema)}.#{inspect(assoc_data.assoc_field)}. " <>
+                    "This should not happen; please report a bug."
+          end
+
           nested_assocs = merge_assoc_data(acc_assoc_data.nested_assocs ++ assoc_data.nested_assocs)
 
           join_type =
@@ -170,15 +180,9 @@ defmodule QueryBuilder.AssocList do
   end
 
   defp assoc_data(source_binding, source_schema, assoc_field, join_type, preload, join_filters, authorizer) do
-    assoc_schema = assoc_schema(source_schema, assoc_field)
-    cardinality = assoc_cardinality(source_schema, assoc_field)
-
-    assoc_binding =
-      with assoc_binding when not is_nil(assoc_binding) <- source_schema._binding(assoc_field) do
-        assoc_binding
-      else
-        _ -> assoc_schema._binding()
-      end
+    assoc_schema = source_schema._assoc_schema(assoc_field)
+    cardinality = source_schema._assoc_cardinality(assoc_field)
+    assoc_binding = source_schema._binding(assoc_field)
 
     {join_type, auth_z_join_filters} =
       case authorizer && authorizer.reject_unauthorized_assoc(source_schema, {assoc_field, assoc_schema}) do
@@ -215,21 +219,5 @@ defmodule QueryBuilder.AssocList do
       source_binding: source_binding,
       source_schema: source_schema
     }
-  end
-
-  defp assoc_schema(source_schema, assoc_field) do
-    assoc_data = source_schema.__schema__(:association, assoc_field)
-
-    if assoc_data do
-      assoc_data.queryable
-    else
-      raise ArgumentError,
-            "association #{inspect(assoc_field)} not found in #{inspect(source_schema)}; " <>
-              "available associations: #{inspect(source_schema.__schema__(:associations))}"
-    end
-  end
-
-  defp assoc_cardinality(source_schema, assoc_field) do
-    source_schema.__schema__(:association, assoc_field).cardinality
   end
 end

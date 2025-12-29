@@ -1,5 +1,5 @@
 defmodule QueryBuilder.Acl do
-  use QueryBuilder, assoc_fields: [:grantee, :grantor]
+  use QueryBuilder
   use Ecto.Schema
 
   schema "acl" do

@@ -1,5 +1,5 @@
 defmodule QueryBuilder.CommentLike do
-  use QueryBuilder, assoc_fields: [:article, :comment, :user]
+  use QueryBuilder
   use Ecto.Schema
 
   schema "comment_likes" do

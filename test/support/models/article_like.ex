@@ -1,5 +1,5 @@
 defmodule QueryBuilder.ArticleLike do
-  use QueryBuilder, assoc_fields: [:article, :user]
+  use QueryBuilder
   use Ecto.Schema
 
   schema "article_likes" do

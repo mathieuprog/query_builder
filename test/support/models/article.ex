@@ -1,6 +1,5 @@
 defmodule QueryBuilder.Article do
-  use QueryBuilder,
-    assoc_fields: [:author, :publisher, :comments, :article_likes, :article_stars]
+  use QueryBuilder
 
   use Ecto.Schema
 

@@ -55,8 +55,8 @@ defmodule QueryBuilder.JoinMaker do
             "QueryBuilder attempted to join #{inspect(source_schema)}.#{inspect(assoc_field)} " <>
               "(assoc schema #{inspect(assoc_schema)}) using named binding #{inspect(assoc_binding)}, " <>
               "but the query already has a named binding with that name. " <>
-              "This usually means the query was pre-joined, or multiple associations resolve to the same binding; " <>
-              "consider configuring `assoc_fields:` to generate unique bindings or avoid composing with pre-joined queries."
+              "This usually means the query was pre-joined with the same binding name; " <>
+              "avoid composing QueryBuilder queries with pre-joined queries, or ensure those joins use different named bindings."
     end
 
     join_type = if(join_type == :left, do: :left, else: :inner)
@@ -73,13 +73,7 @@ defmodule QueryBuilder.JoinMaker do
       end
 
     unless Enum.member?(bindings, assoc_binding) do
-      # see schema.ex's module doc in order to understand what's going on here
-      ecto_query =
-        if String.contains?(to_string(assoc_binding), "__") do
-          source_schema._join(ecto_query, join_type, source_binding, assoc_field, on)
-        else
-          assoc_schema._join(ecto_query, join_type, source_binding, assoc_field, on)
-        end
+      ecto_query = source_schema._join(ecto_query, join_type, source_binding, assoc_field, on)
 
       {
         ecto_query,

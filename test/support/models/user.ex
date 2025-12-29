@@ -1,5 +1,5 @@
 defmodule QueryBuilder.User do
-  use CustomQueryBuilder, assoc_fields: [:role, :authored_articles, :published_articles]
+  use CustomQueryBuilder
 
   use Ecto.Schema
 

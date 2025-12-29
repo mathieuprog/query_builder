@@ -1,5 +1,5 @@
 defmodule QueryBuilder.Permission do
-  use QueryBuilder, assoc_fields: [:role]
+  use QueryBuilder
   use Ecto.Schema
 
   schema "permissions" do
