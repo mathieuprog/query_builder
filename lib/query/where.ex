@@ -15,13 +15,21 @@ defmodule QueryBuilder.Query.Where do
   def build_dynamic_query(ecto_query, assoc_list, filters, or_filters) do
     filters_list = [filters | Keyword.get_values(or_filters, :or)]
 
-    filters_list
-    |> Enum.filter(&(&1 != []))
-    |> Enum.map(fn filters ->
-      apply_filters(ecto_query, assoc_list, List.wrap(filters))
-      |> Enum.reduce(&Ecto.Query.dynamic(^&1 and ^&2))
-    end)
-    |> Enum.reduce(&Ecto.Query.dynamic(^&1 or ^&2))
+    dynamic_groups =
+      filters_list
+      |> Enum.filter(&(&1 != []))
+      |> Enum.map(fn filters ->
+        apply_filters(ecto_query, assoc_list, List.wrap(filters))
+        |> Enum.reduce(&Ecto.Query.dynamic(^&1 and ^&2))
+      end)
+
+    case dynamic_groups do
+      [] ->
+        Ecto.Query.dynamic(true)
+
+      [first | rest] ->
+        Enum.reduce(rest, first, &Ecto.Query.dynamic(^&1 or ^&2))
+    end
   end
 
   defp apply_filters(_query, _assoc_list, []), do: []
@@ -47,75 +55,82 @@ defmodule QueryBuilder.Query.Where do
       {field2, binding_field2} = find_field_and_binding_from_token(query, assoc_list, field2)
 
       do_where(
+        query,
         binding_field1,
         binding_field2,
         {field, operator, field2, operator_opts}
       )
     else
-      do_where(binding_field1, {field, operator, value, operator_opts})
+      do_where(query, binding_field1, {field, operator, value, operator_opts})
     end
   end
 
   defp apply_filter(query, assoc_list, {field, operator, value, operator_opts}) do
     {field, binding} = find_field_and_binding_from_token(query, assoc_list, field)
 
-    do_where(binding, {field, operator, value, operator_opts})
+    do_where(query, binding, {field, operator, value, operator_opts})
   end
 
   defp apply_filter(query, assoc_list, custom_fun) when is_function(custom_fun) do
     custom_fun.(&(find_field_and_binding_from_token(query, assoc_list, &1)))
   end
 
-  defp do_where(binding, {field, :in, values, []}) when is_list(values) do
+  defp do_where(_query, binding, {field, :in, values, []}) when is_list(values) do
     Ecto.Query.dynamic([{^binding, x}], field(x, ^field) in ^values)
   end
 
-  defp do_where(binding, {field, :not_in, values, []}) when is_list(values) do
+  defp do_where(_query, binding, {field, :not_in, values, []}) when is_list(values) do
     Ecto.Query.dynamic([{^binding, x}], field(x, ^field) not in ^values)
   end
 
-  defp do_where(binding, {field, :include, value, []}) do
+  defp do_where(_query, binding, {field, :include, value, []}) do
     Ecto.Query.dynamic([{^binding, x}], ^value in field(x, ^field))
   end
 
-  defp do_where(binding, {field, :exclude, value, []}) do
+  defp do_where(_query, binding, {field, :exclude, value, []}) do
     Ecto.Query.dynamic([{^binding, x}], ^value not in field(x, ^field))
   end
 
-  defp do_where(binding, {field, operator, nil, []}) when operator in [:eq, :equal_to] do
+  defp do_where(_query, binding, {field, operator, nil, []}) when operator in [:eq, :equal_to] do
     Ecto.Query.dynamic([{^binding, x}], is_nil(field(x, ^field)))
   end
 
-  defp do_where(binding, {field, operator, value, []}) when operator in [:eq, :equal_to] do
+  defp do_where(_query, binding, {field, operator, value, []}) when operator in [:eq, :equal_to] do
     Ecto.Query.dynamic([{^binding, x}], field(x, ^field) == ^value)
   end
 
-  defp do_where(binding, {field, operator, nil, []}) when operator in [:ne, :other_than] do
+  defp do_where(_query, binding, {field, operator, nil, []}) when operator in [:ne, :other_than] do
     Ecto.Query.dynamic([{^binding, x}], not is_nil(field(x, ^field)))
   end
 
-  defp do_where(binding, {field, operator, value, []}) when operator in [:ne, :other_than] do
+  defp do_where(_query, binding, {field, operator, value, []}) when operator in [:ne, :other_than] do
     Ecto.Query.dynamic([{^binding, x}], field(x, ^field) != ^value)
   end
 
-  defp do_where(binding, {field, operator, value, []}) when operator in [:gt, :greater_than] do
+  defp do_where(_query, binding, {field, operator, value, []}) when operator in [:gt, :greater_than] do
     Ecto.Query.dynamic([{^binding, x}], field(x, ^field) > ^value)
   end
 
-  defp do_where(binding, {field, operator, value, []}) when operator in [:ge, :greater_than_or_equal_to] do
+  defp do_where(_query, binding, {field, operator, value, []}) when operator in [:ge, :greater_than_or_equal_to] do
     Ecto.Query.dynamic([{^binding, x}], field(x, ^field) >= ^value)
   end
 
-  defp do_where(binding, {field, operator, value, []}) when operator in [:lt, :less_than] do
+  defp do_where(_query, binding, {field, operator, value, []}) when operator in [:lt, :less_than] do
     Ecto.Query.dynamic([{^binding, x}], field(x, ^field) < ^value)
   end
 
-  defp do_where(binding, {field, operator, value, []}) when operator in [:le, :less_than_or_equal_to] do
+  defp do_where(_query, binding, {field, operator, value, []}) when operator in [:le, :less_than_or_equal_to] do
     Ecto.Query.dynamic([{^binding, x}], field(x, ^field) <= ^value)
   end
 
-  defp do_where(binding, {field, search_operation, value, operator_opts})
+  defp do_where(query, binding, {field, search_operation, value, operator_opts})
        when search_operation in [:starts_with, :ends_with, :contains] do
+    unless is_binary(value) do
+      raise Ecto.QueryError,
+        message: "expected a string for #{inspect(search_operation)} on #{inspect(field)}, got: #{inspect(value)}",
+        query: query
+    end
+
     value =
       value
       |> String.replace("%", "\\%")
@@ -134,42 +149,56 @@ defmodule QueryBuilder.Query.Where do
 
       case_sensitivity when case_sensitivity in [:insensitive, :i] ->
         Ecto.Query.dynamic([{^binding, x}], ilike(field(x, ^field), ^value))
+
+      other ->
+        raise Ecto.QueryError,
+          message:
+            "invalid :case option #{inspect(other)} for #{inspect(search_operation)} on #{inspect(field)} " <>
+              "(supported: :sensitive, :insensitive, :i)",
+          query: query
     end
   end
 
-  defp do_where(binding, {field, :like, value, []}) do
+  defp do_where(_query, binding, {field, :like, value, []}) do
     Ecto.Query.dynamic([{^binding, x}], like(field(x, ^field), ^value))
   end
 
-  defp do_where(binding, {field, :ilike, value, []}) do
+  defp do_where(_query, binding, {field, :ilike, value, []}) do
     Ecto.Query.dynamic([{^binding, x}], ilike(field(x, ^field), ^value))
   end
 
-  defp do_where(b1, b2, {f1, operator, f2, []}) when operator in [:eq, :equal_to] do
+  defp do_where(query, _binding, {field, operator, value, operator_opts}) do
+    raise Ecto.QueryError,
+      message:
+        "unsupported filter {#{inspect(field)}, #{inspect(operator)}, #{inspect(value)}, #{inspect(operator_opts)}}",
+      query: query
+  end
+
+  defp do_where(_query, b1, b2, {f1, operator, f2, []}) when operator in [:eq, :equal_to] do
     Ecto.Query.dynamic([{^b1, x}, {^b2, y}], field(x, ^f1) == field(y, ^f2))
   end
 
-  defp do_where(b1, b2, {f1, operator, f2, []}) when operator in [:ne, :other_than] do
+  defp do_where(_query, b1, b2, {f1, operator, f2, []}) when operator in [:ne, :other_than] do
     Ecto.Query.dynamic([{^b1, x}, {^b2, y}], field(x, ^f1) != field(y, ^f2))
   end
 
-  defp do_where(b1, b2, {f1, operator, f2, []}) when operator in [:gt, :greater_than] do
+  defp do_where(_query, b1, b2, {f1, operator, f2, []}) when operator in [:gt, :greater_than] do
     Ecto.Query.dynamic([{^b1, x}, {^b2, y}], field(x, ^f1) > field(y, ^f2))
   end
 
-  defp do_where(b1, b2, {f1, operator, f2, []}) when operator in [:ge, :greater_than_or_equal_to] do
+  defp do_where(_query, b1, b2, {f1, operator, f2, []}) when operator in [:ge, :greater_than_or_equal_to] do
     Ecto.Query.dynamic([{^b1, x}, {^b2, y}], field(x, ^f1) >= field(y, ^f2))
   end
 
-  defp do_where(b1, b2, {f1, operator, f2, []}) when operator in [:lt, :less_than] do
+  defp do_where(_query, b1, b2, {f1, operator, f2, []}) when operator in [:lt, :less_than] do
     Ecto.Query.dynamic([{^b1, x}, {^b2, y}], field(x, ^f1) < field(y, ^f2))
   end
 
-  defp do_where(b1, b2, {f1, operator, f2, []}) when operator in [:le, :less_than_or_equal_to] do
+  defp do_where(_query, b1, b2, {f1, operator, f2, []}) when operator in [:le, :less_than_or_equal_to] do
     Ecto.Query.dynamic([{^b1, x}, {^b2, y}], field(x, ^f1) <= field(y, ^f2))
   end
 
-  defp do_where(b1, b2, {f1, search_operation, f2, operator_opts})
+  defp do_where(query, b1, b2, {f1, search_operation, f2, operator_opts})
        when search_operation in [:starts_with, :ends_with, :contains] do
     case Keyword.get(operator_opts, :case, :sensitive) do
       :sensitive ->
@@ -191,7 +220,21 @@ defmodule QueryBuilder.Query.Where do
           :contains ->
             Ecto.Query.dynamic([{^b1, x}, {^b2, y}], fragment("? ilike concat('%', ?, '%')", field(x, ^f1), field(y, ^f2)))
         end
+
+      other ->
+        raise Ecto.QueryError,
+          message:
+            "invalid :case option #{inspect(other)} for field-to-field #{inspect(search_operation)} " <>
+              "on #{inspect(f1)} vs #{inspect(f2)} (supported: :sensitive, :insensitive, :i)",
+          query: query
     end
+  end
+
+  defp do_where(query, _b1, _b2, {f1, operator, f2, operator_opts}) do
+    raise Ecto.QueryError,
+      message:
+        "unsupported field-to-field filter {#{inspect(f1)}, #{inspect(operator)}, #{inspect(f2)}, #{inspect(operator_opts)}}",
+      query: query
   end
 
   defp value_is_field(val) when val in [nil, false, true], do: false
