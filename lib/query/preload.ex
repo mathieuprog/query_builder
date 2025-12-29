@@ -76,13 +76,22 @@ defmodule QueryBuilder.Query.Preload do
   end
 
   defp do_flatten_assoc_data(%{nested_assocs: nested_assocs, preload: preload} = assoc_data) do
-    for nested_assoc_data <- nested_assocs,
-        rest <- do_flatten_assoc_data(nested_assoc_data) do
-      if preload do
-        [Map.delete(assoc_data, :nested_assocs) | rest]
-      else
-        rest
+    assoc_data_without_nested = Map.delete(assoc_data, :nested_assocs)
+
+    nested_paths =
+      for nested_assoc_data <- nested_assocs,
+          rest <- do_flatten_assoc_data(nested_assoc_data) do
+        if preload do
+          [assoc_data_without_nested | rest]
+        else
+          rest
+        end
       end
+
+    if preload and nested_paths == [] do
+      [[assoc_data_without_nested]]
+    else
+      nested_paths
     end
   end
 
