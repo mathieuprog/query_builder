@@ -223,8 +223,9 @@ defmodule QueryBuilder.AssocList do
     if assoc_data do
       assoc_data.queryable
     else
-      raise "association :" <>
-              to_string(assoc_field) <> " not found in " <> to_string(source_schema)
+      raise ArgumentError,
+            "association #{inspect(assoc_field)} not found in #{inspect(source_schema)}; " <>
+              "available associations: #{inspect(source_schema.__schema__(:associations))}"
     end
   end
 

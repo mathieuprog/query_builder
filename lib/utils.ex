@@ -21,8 +21,16 @@ defmodule QueryBuilder.Utils do
   end
 
   defp do_find_field_and_binding_from_token(_query, assoc_list, [field, assoc_field]) do
-    {:ok, binding} = find_binding_from_token(assoc_list, assoc_field)
-    {field, binding}
+    case find_binding_from_token(assoc_list, assoc_field) do
+      {:ok, binding} ->
+        {field, binding}
+
+      {:error, :not_found} ->
+        raise ArgumentError,
+              "unknown association token @#{assoc_field} in #{inspect(field)}@#{assoc_field}; " <>
+                "include it in the assoc_fields argument (e.g. where(query, [:#{assoc_field}], ...)) " <>
+                "or join/preload it before filtering"
+    end
   end
 
   defp find_binding_from_token([], _field), do: {:error, :not_found}
