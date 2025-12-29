@@ -11,7 +11,7 @@ defmodule QueryBuilder.Query.Offset do
     Ecto.Query.offset(query, ^value)
   end
 
-  defp apply_offset(query, value) do
+  defp apply_offset(query, value) when is_binary(value) do
     case Integer.parse(value) do
       {int_value, _rest} ->
         apply_offset(query, int_value)
@@ -21,5 +21,11 @@ defmodule QueryBuilder.Query.Offset do
           message: "Offset value must be integer. Got #{inspect(value)}",
           query: query
     end
+  end
+
+  defp apply_offset(query, value) do
+    raise Ecto.QueryError,
+      message: "Offset value must be integer. Got #{inspect(value)}",
+      query: query
   end
 end

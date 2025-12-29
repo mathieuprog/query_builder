@@ -11,7 +11,7 @@ defmodule QueryBuilder.Query.Limit do
     Ecto.Query.limit(query, ^value)
   end
 
-  defp apply_limit(query, value) do
+  defp apply_limit(query, value) when is_binary(value) do
     case Integer.parse(value) do
       {int_value, _rest} ->
         apply_limit(query, int_value)
@@ -21,5 +21,11 @@ defmodule QueryBuilder.Query.Limit do
           message: "Limit value must be integer. Got #{inspect(value)}",
           query: query
     end
+  end
+
+  defp apply_limit(query, value) do
+    raise Ecto.QueryError,
+      message: "Limit value must be integer. Got #{inspect(value)}",
+      query: query
   end
 end

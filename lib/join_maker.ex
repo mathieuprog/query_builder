@@ -51,7 +51,12 @@ defmodule QueryBuilder.JoinMaker do
       join_type: join_type
     } = assoc_data
     if Ecto.Query.has_named_binding?(ecto_query, assoc_binding) do
-      raise "has already joined"
+      raise ArgumentError,
+            "QueryBuilder attempted to join #{inspect(source_schema)}.#{inspect(assoc_field)} " <>
+              "(assoc schema #{inspect(assoc_schema)}) using named binding #{inspect(assoc_binding)}, " <>
+              "but the query already has a named binding with that name. " <>
+              "This usually means the query was pre-joined, or multiple associations resolve to the same binding; " <>
+              "consider configuring `assoc_fields:` to generate unique bindings or avoid composing with pre-joined queries."
     end
 
     join_type = if(join_type == :left, do: :left, else: :inner)

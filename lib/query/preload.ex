@@ -205,4 +205,10 @@ defmodule QueryBuilder.Query.Preload do
       ]
     )
   end
+
+  defp do_preload_with_bindings(_query, bindings) when is_list(bindings) do
+    raise ArgumentError,
+          "preload with bindings supports join chains up to 6 associations; " <>
+            "got #{length(bindings)}: #{inspect(bindings)}"
+  end
 end
