@@ -14,11 +14,11 @@ defmodule QueryBuilder.Query.Preload do
       flattened_assoc_data
       # Filter only the associations that have been joined
       |> Enum.map(fn assoc_data_list ->
-        Enum.flat_map(assoc_data_list, fn
-          %{has_joined: false} -> []
-          assoc_data -> [{assoc_data.assoc_binding, assoc_data.assoc_field}]
-        end)
+        assoc_data_list
+        |> Enum.take_while(&effective_joined?(ecto_query, &1))
+        |> Enum.map(fn assoc_data -> {assoc_data.assoc_binding, assoc_data.assoc_field} end)
       end)
+      |> Enum.reject(&(&1 == []))
       # Get rid of the associations' lists that are redundant;
       # for example for the 4 lists below:
       # `[{:binding1, :field1}]`
@@ -46,7 +46,7 @@ defmodule QueryBuilder.Query.Preload do
       flattened_assoc_data
       |> Enum.map(fn assoc_data_list ->
         Enum.reverse(assoc_data_list)
-        |> Enum.drop_while(& &1.has_joined)
+        |> Enum.drop_while(&effective_joined?(ecto_query, &1))
         |> Enum.map(& &1.assoc_field)
         |> Enum.reverse()
       end)
@@ -111,113 +111,23 @@ defmodule QueryBuilder.Query.Preload do
 
   defp do_preload_with_bindings(query, []), do: query
 
-  defp do_preload_with_bindings(query, [{assoc_binding, assoc_field}]) do
-    Ecto.Query.preload(query, [{^assoc_binding, x}], [
-      {^assoc_field, x}
-    ])
+  defp do_preload_with_bindings(query, bindings) when is_list(bindings) do
+    Ecto.Query.preload(query, ^build_join_preload(bindings))
   end
 
-  defp do_preload_with_bindings(query, [
-         {assoc_binding1, assoc_field1},
-         {assoc_binding2, assoc_field2}
-       ]) do
-    Ecto.Query.preload(query, [{^assoc_binding1, x}, {^assoc_binding2, y}], [
-      {^assoc_field1, {x, [{^assoc_field2, y}]}}
-    ])
+  defp build_join_preload([{assoc_binding, assoc_field}]) do
+    binding_expr = Ecto.Query.dynamic([{^assoc_binding, x}], x)
+    [{assoc_field, binding_expr}]
   end
 
-  defp do_preload_with_bindings(query, [
-         {assoc_binding1, assoc_field1},
-         {assoc_binding2, assoc_field2},
-         {assoc_binding3, assoc_field3}
-       ]) do
-    Ecto.Query.preload(
-      query,
-      [{^assoc_binding1, x}, {^assoc_binding2, y}, {^assoc_binding3, z}],
-      [
-        {^assoc_field1, {x, [{^assoc_field2, {y, [{^assoc_field3, z}]}}]}}
-      ]
-    )
+  defp build_join_preload([{assoc_binding, assoc_field} | rest]) do
+    binding_expr = Ecto.Query.dynamic([{^assoc_binding, x}], x)
+    [{assoc_field, {binding_expr, build_join_preload(rest)}}]
   end
 
-  defp do_preload_with_bindings(query, [
-         {assoc_binding1, assoc_field1},
-         {assoc_binding2, assoc_field2},
-         {assoc_binding3, assoc_field3},
-         {assoc_binding4, assoc_field4}
-       ]) do
-    Ecto.Query.preload(
-      query,
-      [{^assoc_binding1, x}, {^assoc_binding2, y}, {^assoc_binding3, z}, {^assoc_binding4, a}],
-      [
-        {^assoc_field1, {x, [{^assoc_field2, {y, [{^assoc_field3, {z, [{^assoc_field4, a}]}}]}}]}}
-      ]
-    )
+  defp effective_joined?(ecto_query, %{has_joined: true, assoc_binding: assoc_binding}) do
+    Ecto.Query.has_named_binding?(ecto_query, assoc_binding)
   end
 
-  defp do_preload_with_bindings(query, [
-         {assoc_binding1, assoc_field1},
-         {assoc_binding2, assoc_field2},
-         {assoc_binding3, assoc_field3},
-         {assoc_binding4, assoc_field4},
-         {assoc_binding5, assoc_field5}
-       ]) do
-    Ecto.Query.preload(
-      query,
-      [
-        {^assoc_binding1, x},
-        {^assoc_binding2, y},
-        {^assoc_binding3, z},
-        {^assoc_binding4, a},
-        {^assoc_binding5, b}
-      ],
-      [
-        {^assoc_field1,
-         {x,
-          [
-            {^assoc_field2,
-             {y, [{^assoc_field3, {z, [{^assoc_field4, {a, [{^assoc_field5, b}]}}]}}]}}
-          ]}}
-      ]
-    )
-  end
-
-  defp do_preload_with_bindings(query, [
-         {assoc_binding1, assoc_field1},
-         {assoc_binding2, assoc_field2},
-         {assoc_binding3, assoc_field3},
-         {assoc_binding4, assoc_field4},
-         {assoc_binding5, assoc_field5},
-         {assoc_binding6, assoc_field6}
-       ]) do
-    Ecto.Query.preload(
-      query,
-      [
-        {^assoc_binding1, x},
-        {^assoc_binding2, y},
-        {^assoc_binding3, z},
-        {^assoc_binding4, a},
-        {^assoc_binding5, b},
-        {^assoc_binding6, c}
-      ],
-      [
-        {^assoc_field1,
-         {x,
-          [
-            {^assoc_field2,
-             {y,
-              [
-                {^assoc_field3,
-                 {z, [{^assoc_field4, {a, [{^assoc_field5, {b, [{^assoc_field6, c}]}}]}}]}}
-              ]}}
-          ]}}
-      ]
-    )
-  end
-
-  defp do_preload_with_bindings(_query, bindings) when is_list(bindings) do
-    raise ArgumentError,
-          "preload with bindings supports join chains up to 6 associations; " <>
-            "got #{length(bindings)}: #{inspect(bindings)}"
-  end
+  defp effective_joined?(_ecto_query, _assoc_data), do: false
 end
