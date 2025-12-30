@@ -56,7 +56,8 @@ defmodule QueryBuilder.Utils do
           String.to_existing_atom(assoc_field)
         rescue
           ArgumentError ->
-            raise ArgumentError, "unknown association #{inspect(assoc_field)} in token #{inspect(token)}"
+            raise ArgumentError,
+                  "unknown association #{inspect(assoc_field)} in token #{inspect(token)}"
         end
       end
 

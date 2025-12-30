@@ -64,10 +64,10 @@ defmodule QueryBuilder.Extension do
       defdelegate maybe_where(query, condition, assoc_fields, filters, or_filters \\ []),
         to: QueryBuilder
 
-        defdelegate maybe_order_by(query, bool, value), to: QueryBuilder
+      defdelegate maybe_order_by(query, bool, value), to: QueryBuilder
 
-        defdelegate maybe_order_by(query, condition, assoc_fields, value),
-          to: QueryBuilder
+      defdelegate maybe_order_by(query, condition, assoc_fields, value),
+        to: QueryBuilder
 
       defdelegate new(ecto_query), to: QueryBuilder
       defdelegate paginate(query, repo, opts \\ []), to: QueryBuilder

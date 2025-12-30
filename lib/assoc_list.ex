@@ -4,26 +4,22 @@ defmodule QueryBuilder.AssocList do
   defmodule State do
     @moduledoc false
 
-    # The `token` function below received way too many arguments (which made the code
-    # harder to read and led `mix format` to split the arguments over multiple lines).
-    #
-    # The purpose of this struct is to reduce the number of arguments and to maintain
-    # state between `token`'s recursive calls, hence its name.
+    # AssocList is built recursively and needs to carry a handful of values between
+    # recursive calls. This struct keeps the recursive function signatures readable.
 
     defstruct source_binding: nil,
               source_schema: nil,
               # `bindings` allows to keep track of all the binding names in order to
               # detect a binding name that is going to be used twice when joining
-              # associations; in such case, the `token` function raises an error.
+              # associations.
               bindings: []
   end
 
   @doc ~S"""
-  The purpose of the `token/2` function is to generate a data structure containing
-  information about given association tree.
+  Builds (and merges) an association tree data structure.
 
-  It receives a query and a list (with nested lists) of association fields (atoms).
-  For example:
+  It receives an association tree expressed as nested lists/keyword lists of
+  association fields (atoms). For example:
   ```
   [
     {:authored_articles,
@@ -72,7 +68,9 @@ defmodule QueryBuilder.AssocList do
     Enum.reduce(assoc_list, [], fn assoc_data, new_assoc_list ->
       new_assoc_list
       |> Enum.with_index()
-      |> Enum.find(fn {acc_assoc_data, _index} -> acc_assoc_data.assoc_binding == assoc_data.assoc_binding end)
+      |> Enum.find(fn {acc_assoc_data, _index} ->
+        acc_assoc_data.assoc_binding == assoc_data.assoc_binding
+      end)
       |> case do
         {acc_assoc_data, index} ->
           if acc_assoc_data.assoc_field != assoc_data.assoc_field or
@@ -85,7 +83,8 @@ defmodule QueryBuilder.AssocList do
                     "This should not happen; please report a bug."
           end
 
-          nested_assocs = merge_assoc_data(acc_assoc_data.nested_assocs ++ assoc_data.nested_assocs)
+          nested_assocs =
+            merge_assoc_data(acc_assoc_data.nested_assocs ++ assoc_data.nested_assocs)
 
           join_type =
             cond do
@@ -102,7 +101,7 @@ defmodule QueryBuilder.AssocList do
           preload = acc_assoc_data.preload || assoc_data.preload
 
           join_filters =
-            acc_assoc_data.join_filters ++ assoc_data.join_filters
+            (acc_assoc_data.join_filters ++ assoc_data.join_filters)
             |> Enum.uniq()
             |> Enum.reject(&(&1 == []))
 
@@ -152,7 +151,16 @@ defmodule QueryBuilder.AssocList do
     preload = Keyword.get(opts, :preload, false)
     authorizer = Keyword.get(opts, :authorizer, nil)
 
-    assoc_data = assoc_data(source_binding, source_schema, assoc_field, join_type, preload, join_filters, authorizer)
+    assoc_data =
+      assoc_data(
+        source_binding,
+        source_schema,
+        assoc_field,
+        join_type,
+        preload,
+        join_filters,
+        authorizer
+      )
 
     %{
       assoc_binding: assoc_binding,
@@ -165,11 +173,16 @@ defmodule QueryBuilder.AssocList do
       %{
         assoc_data
         | nested_assocs:
-            do_build([], List.wrap(nested_assoc_fields), %{
-              state
-              | source_binding: assoc_binding,
-                source_schema: assoc_schema
-            }, opts)
+            do_build(
+              [],
+              List.wrap(nested_assoc_fields),
+              %{
+                state
+                | source_binding: assoc_binding,
+                  source_schema: assoc_schema
+              },
+              opts
+            )
       }
 
     do_build([assoc_data | assoc_list], tail, state, opts)
@@ -179,31 +192,40 @@ defmodule QueryBuilder.AssocList do
     do_build(assoc_list, [{assoc_field, []} | tail], state, opts)
   end
 
-  defp assoc_data(source_binding, source_schema, assoc_field, join_type, preload, join_filters, authorizer) do
+  defp assoc_data(
+         source_binding,
+         source_schema,
+         assoc_field,
+         join_type,
+         preload,
+         join_filters,
+         authorizer
+       ) do
     assoc_schema = source_schema._assoc_schema(assoc_field)
     cardinality = source_schema._assoc_cardinality(assoc_field)
     assoc_binding = source_schema._binding(assoc_field)
 
     {join_type, auth_z_join_filters} =
-      case authorizer && authorizer.reject_unauthorized_assoc(source_schema, {assoc_field, assoc_schema}) do
+      case authorizer &&
+             authorizer.reject_unauthorized_assoc(source_schema, {assoc_field, assoc_schema}) do
         %{join: join, on: on, or_on: or_on} ->
           {cond do
-            join == :left || join_type == :left -> :left
-            true -> :inner
-          end, [List.wrap(on), [or: List.wrap(or_on)]]}
+             join == :left || join_type == :left -> :left
+             true -> :inner
+           end, [List.wrap(on), [or: List.wrap(or_on)]]}
 
         %{join: join, on: on} ->
           {cond do
-            join == :left || join_type == :left -> :left
-            true -> :inner
-          end, [List.wrap(on), [or: []]]}
+             join == :left || join_type == :left -> :left
+             true -> :inner
+           end, [List.wrap(on), [or: []]]}
 
         nil ->
           {join_type, []}
       end
 
     join_filters =
-      [join_filters] ++ [auth_z_join_filters]
+      ([join_filters] ++ [auth_z_join_filters])
       |> Enum.reject(&(&1 == []))
 
     %{
