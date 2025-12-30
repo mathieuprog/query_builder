@@ -10,7 +10,7 @@ defmodule QueryBuilder.Authorizer do
       Acl
       |> QueryBuilder.where(grantee_id: @current_user_id)
       |> Repo.all()
-      |> Enum.map(&(&1.grantor_id))
+      |> Enum.map(& &1.grantor_id)
 
     grantors_for_user = [@current_user_id | grantors_for_user]
 
@@ -31,7 +31,7 @@ defmodule QueryBuilder.Authorizer do
       Acl
       |> QueryBuilder.where(grantee_id: @current_user_id)
       |> Repo.all()
-      |> Enum.map(&(&1.grantor_id))
+      |> Enum.map(& &1.grantor_id)
 
     %{
       join: :left,
