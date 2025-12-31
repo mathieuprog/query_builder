@@ -22,6 +22,15 @@ defmodule QueryBuilder do
       raise ArgumentError, "cursor direction #{inspect(cursor_direction)} is invalid"
     end
 
+    base_ecto_query = Ecto.Queryable.to_query(query.ecto_query)
+
+    if base_ecto_query.order_bys != [] do
+      raise ArgumentError,
+            "paginate/3 does not support paginating a query whose base ecto_query already has `order_by` clauses; " <>
+              "express ordering via `QueryBuilder.order_by/*` (or remove base ordering via `Ecto.Query.exclude(base_query, :order_by)`) " <>
+              "before calling paginate/3. base order_bys: #{inspect(base_ecto_query.order_bys)}"
+    end
+
     page_size =
       if max_page_size = Keyword.get(opts, :max_page_size) do
         min(max_page_size, page_size)
