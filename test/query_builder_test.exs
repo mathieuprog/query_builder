@@ -9,7 +9,7 @@ defmodule QueryBuilderTest do
 
   defmodule UnknownAdapterRepo do
     def __adapter__, do: UnknownAdapter
-    def all(_query), do: raise "Repo.all/1 should not be called for unknown adapters"
+    def all(_query), do: raise("Repo.all/1 should not be called for unknown adapters")
   end
 
   defmodule UnknownAdapter do
@@ -853,7 +853,7 @@ defmodule QueryBuilderTest do
   test "cursor pagination does not use the single-query fast path when an @token resolves to a nested association with the same name as a root association" do
     query =
       QueryBuilder.CommentLike
-      |> QueryBuilder.preload([comment: :user])
+      |> QueryBuilder.preload(comment: :user)
       |> QueryBuilder.order_by([comment: :user], asc: :nickname@user)
 
     {_result, query_count} =

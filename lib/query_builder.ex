@@ -126,6 +126,7 @@ defmodule QueryBuilder do
     {entries, first_row_cursor_map, last_row_cursor_map, has_more?} =
       if cursor_pagination_supported? do
         ensure_paginate_select_is_root!(ecto_query)
+
         if single_query_cursor_pagination_possible?(ecto_query, assoc_list, order_by_list) do
           entries = repo.all(ecto_query)
 
@@ -284,7 +285,7 @@ defmodule QueryBuilder do
 
       %Ecto.Query.SelectExpr{} = select ->
         raise ArgumentError,
-                "paginate/3 does not support custom select expressions; " <>
+              "paginate/3 does not support custom select expressions; " <>
                 "expected selecting the root schema struct (e.g. `select: u` or no select), got: #{inspect(select.expr)}"
     end
   end
@@ -397,7 +398,8 @@ defmodule QueryBuilder do
             end
 
           _ ->
-            raise ArgumentError, "paginate/3 internal error: unexpected cursor token #{inspect(token_str)}"
+            raise ArgumentError,
+                  "paginate/3 internal error: unexpected cursor token #{inspect(token_str)}"
         end
 
       Map.put(acc, token_str, value)
@@ -640,12 +642,24 @@ defmodule QueryBuilder do
 
   defp adapter_default_nulls_position!(adapter, dir, field) when dir in [:asc, :desc] do
     case {adapter, dir} do
-      {Ecto.Adapters.Postgres, :asc} -> :last
-      {Ecto.Adapters.Postgres, :desc} -> :first
-      {Ecto.Adapters.MyXQL, :asc} -> :first
-      {Ecto.Adapters.MyXQL, :desc} -> :last
-      {Ecto.Adapters.SQLite3, :asc} -> :first
-      {Ecto.Adapters.SQLite3, :desc} -> :last
+      {Ecto.Adapters.Postgres, :asc} ->
+        :last
+
+      {Ecto.Adapters.Postgres, :desc} ->
+        :first
+
+      {Ecto.Adapters.MyXQL, :asc} ->
+        :first
+
+      {Ecto.Adapters.MyXQL, :desc} ->
+        :last
+
+      {Ecto.Adapters.SQLite3, :asc} ->
+        :first
+
+      {Ecto.Adapters.SQLite3, :desc} ->
+        :last
+
       {other, _} ->
         raise ArgumentError,
               "paginate/3 cannot infer the default NULL ordering for adapter #{inspect(other)} " <>
