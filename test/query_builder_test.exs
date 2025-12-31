@@ -7,6 +7,14 @@ defmodule QueryBuilderTest do
 
   doctest QueryBuilder
 
+  defmodule UnknownAdapterRepo do
+    def __adapter__, do: UnknownAdapter
+    def all(_query), do: raise "Repo.all/1 should not be called for unknown adapters"
+  end
+
+  defmodule UnknownAdapter do
+  end
+
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(QueryBuilder.Repo)
   end
@@ -29,17 +37,83 @@ defmodule QueryBuilderTest do
     insert(:permission, %{role: role_publisher, name: "publish"})
     insert(:permission, %{role: role_reader, name: "read"})
 
-    author1 = insert(:user, %{id: 100, name: "Alice", email: "alice@example.com", role: role_author, nickname: "Alice"})
-    author2 = insert(:user, %{id: 101, name: "Bob", email: "the_bob@example.com", role: role_author, nickname: "Bobby"})
-    author3 = insert(:user, %{id: 103, name: "Charlie", email: "charlie@example.com", role: role_author, nickname: "Lee"})
-    reader = insert(:user, %{id: 102, name: "Eric", email: nil, role: role_reader, nickname: "Eric", deleted: true})
-    insert(:user, %{id: 200, name: "Dave", email: "dave@example.com", role: role_admin, nickname: "Dave"})
-    insert(:user, %{id: 201, name: "Richard", email: "richard@example.com", role: role_admin, nickname: "Rich"})
-    insert(:user, %{id: 202, name: "An% we_ird %name_%", email: "weirdo@example.com", role: role_reader, nickname: "John"})
-    insert(:user, %{id: 203, name: "An_ we_ird %name_%", email: "weirdo@example.com", role: role_reader, nickname: "James"})
+    author1 =
+      insert(:user, %{
+        id: 100,
+        name: "Alice",
+        email: "alice@example.com",
+        role: role_author,
+        nickname: "Alice"
+      })
+
+    author2 =
+      insert(:user, %{
+        id: 101,
+        name: "Bob",
+        email: "the_bob@example.com",
+        role: role_author,
+        nickname: "Bobby"
+      })
+
+    author3 =
+      insert(:user, %{
+        id: 103,
+        name: "Charlie",
+        email: "charlie@example.com",
+        role: role_author,
+        nickname: "Lee"
+      })
+
+    reader =
+      insert(:user, %{
+        id: 102,
+        name: "Eric",
+        email: nil,
+        role: role_reader,
+        nickname: "Eric",
+        deleted: true
+      })
+
+    insert(:user, %{
+      id: 200,
+      name: "Dave",
+      email: "dave@example.com",
+      role: role_admin,
+      nickname: "Dave"
+    })
+
+    insert(:user, %{
+      id: 201,
+      name: "Richard",
+      email: "richard@example.com",
+      role: role_admin,
+      nickname: "Rich"
+    })
+
+    insert(:user, %{
+      id: 202,
+      name: "An% we_ird %name_%",
+      email: "weirdo@example.com",
+      role: role_reader,
+      nickname: "John"
+    })
+
+    insert(:user, %{
+      id: 203,
+      name: "An_ we_ird %name_%",
+      email: "weirdo@example.com",
+      role: role_reader,
+      nickname: "James"
+    })
 
     publisher =
-      insert(:user, %{id: 300, name: "Calvin", email: "calvin@example.com", role: role_publisher, nickname: "Calvin"})
+      insert(:user, %{
+        id: 300,
+        name: "Calvin",
+        email: "calvin@example.com",
+        role: role_publisher,
+        nickname: "Calvin"
+      })
 
     insert(:acl, %{grantee: author1, grantor: author2})
     insert(:acl, %{grantee: reader, grantor: author1})
@@ -50,7 +124,12 @@ defmodule QueryBuilderTest do
     title4 = "INTEGRATING TRAVEL WITH ELIXIR AT DUFFEL"
 
     articles = [
-      insert(:article, %{title: title1, author: author1, publisher: publisher, tags: ["baz", "qux"]}),
+      insert(:article, %{
+        title: title1,
+        author: author1,
+        publisher: publisher,
+        tags: ["baz", "qux"]
+      }),
       insert(:article, %{title: title2, author: author1, publisher: publisher, tags: ["baz"]}),
       insert(:article, %{title: title3, author: author2, publisher: publisher}),
       insert(:article, %{title: title4, author: author3, publisher: publisher})
@@ -68,6 +147,72 @@ defmodule QueryBuilderTest do
     end
 
     :ok
+  end
+
+  defp with_repo_query_count(fun) when is_function(fun, 0) do
+    parent = self()
+    handler_id = "repo-query-count-#{System.unique_integer([:positive])}"
+
+    :telemetry.attach(
+      handler_id,
+      [:query_builder, :repo, :query],
+      fn _event, _measurements, _metadata, parent ->
+        send(parent, {:repo_query, handler_id})
+      end,
+      parent
+    )
+
+    result =
+      try do
+        fun.()
+      after
+        :telemetry.detach(handler_id)
+      end
+
+    {result, drain_repo_query_messages(handler_id)}
+  end
+
+  defp drain_repo_query_messages(handler_id, count \\ 0) do
+    receive do
+      {:repo_query, ^handler_id} ->
+        drain_repo_query_messages(handler_id, count + 1)
+    after
+      0 ->
+        count
+    end
+  end
+
+  defp with_repo_queries(fun) when is_function(fun, 0) do
+    parent = self()
+    handler_id = "repo-queries-#{System.unique_integer([:positive])}"
+
+    :telemetry.attach(
+      handler_id,
+      [:query_builder, :repo, :query],
+      fn _event, _measurements, metadata, parent ->
+        send(parent, {:repo_query, handler_id, metadata})
+      end,
+      parent
+    )
+
+    result =
+      try do
+        fun.()
+      after
+        :telemetry.detach(handler_id)
+      end
+
+    {result, drain_repo_query_metadata(handler_id)}
+  end
+
+  defp drain_repo_query_metadata(handler_id, acc \\ []) do
+    receive do
+      {:repo_query, ^handler_id, metadata} ->
+        drain_repo_query_metadata(handler_id, [metadata | acc])
+    after
+      0 ->
+        Enum.reverse(acc)
+    end
   end
 
   test "authorizer" do
@@ -247,7 +392,9 @@ defmodule QueryBuilderTest do
   test "where with or groups" do
     result =
       User
-      |> QueryBuilder.where([], [name: "Alice", deleted: false], or: [name: "Bob", deleted: false])
+      |> QueryBuilder.where([], [name: "Alice", deleted: false],
+        or: [name: "Bob", deleted: false]
+      )
       |> Repo.all()
 
     assert 2 == length(result)
@@ -255,7 +402,11 @@ defmodule QueryBuilderTest do
     result =
       User
       |> QueryBuilder.where(deleted: false)
-      |> QueryBuilder.where([], [name: "Alice"], or: [name: "Bob"], or: [name: "Eric"], or: [name: "Dave"])
+      |> QueryBuilder.where([], [name: "Alice"],
+        or: [name: "Bob"],
+        or: [name: "Eric"],
+        or: [name: "Dave"]
+      )
       |> Repo.all()
 
     assert 3 == length(result)
@@ -278,7 +429,7 @@ defmodule QueryBuilderTest do
   end
 
   test "where with custom query" do
-    text_equals_condition = fn (field, value, get_binding_fun) ->
+    text_equals_condition = fn field, value, get_binding_fun ->
       {field, binding} = get_binding_fun.(field)
       Ecto.Query.dynamic([{^binding, x}], fragment("initcap(?)", ^value) == field(x, ^field))
     end
@@ -452,7 +603,7 @@ defmodule QueryBuilderTest do
   end
 
   test "order_by with fragment" do
-    character_length = fn (field, get_binding_fun) ->
+    character_length = fn field, get_binding_fun ->
       {field, binding} = get_binding_fun.(field)
       Ecto.Query.dynamic([{^binding, x}], fragment("character_length(?)", field(x, ^field)))
     end
@@ -474,24 +625,37 @@ defmodule QueryBuilderTest do
 
     assert User
            |> QueryBuilder.where(name: "Eric")
-           |> QueryBuilder.left_join(:authored_articles, title@authored_articles: "ELIXIR V1.9 RELEASED")
+           |> QueryBuilder.left_join(:authored_articles,
+             title@authored_articles: "ELIXIR V1.9 RELEASED"
+           )
            |> Repo.one()
 
     refute User
            |> QueryBuilder.where(name: "Eric")
-           |> QueryBuilder.where(:authored_articles, title@authored_articles: "ELIXIR V1.9 RELEASED")
+           |> QueryBuilder.where(:authored_articles,
+             title@authored_articles: "ELIXIR V1.9 RELEASED"
+           )
            |> Repo.one()
   end
 
   test "preload" do
     query =
-      Ecto.Query.from(u in User, join: r in assoc(u, :role), join: a in assoc(u, :authored_articles))
+      Ecto.Query.from(u in User,
+        join: r in assoc(u, :role),
+        join: a in assoc(u, :authored_articles)
+      )
       |> Ecto.Query.where([u, r, a], a.title == ^"ELIXIR V1.9 RELEASED")
-      |> Ecto.Query.preload([u, r, a], [:published_articles, authored_articles: {a, [:article_likes, :article_stars, {:comments, [:comment_stars, comment_likes: :user]}]}])
+      |> Ecto.Query.preload([u, r, a], [
+        :published_articles,
+        authored_articles:
+          {a,
+           [:article_likes, :article_stars, {:comments, [:comment_stars, comment_likes: :user]}]}
+      ])
       |> Ecto.Query.preload([u, r, a], role: r)
 
     preload = [
-      :role, :published_articles,
+      :role,
+      :published_articles,
       {
         :authored_articles,
         [
@@ -518,11 +682,12 @@ defmodule QueryBuilderTest do
   end
 
   test "cursor pagination" do
-    query = from u in User, order_by: [asc: u.nickname, desc: u.email]
-    query = from u in query, order_by: [desc: u.email]
+    query = from(u in User, order_by: [asc: u.nickname, desc: u.email])
+    query = from(u in query, order_by: [desc: u.email])
     all_users = Repo.all(query)
 
-    assert ["Alice", "Bobby", "Calvin", "Dave", "Eric", "James", "John", "Lee", "Rich"] = all_users |> Enum.map(& &1.nickname)
+    assert ["Alice", "Bobby", "Calvin", "Dave", "Eric", "James", "John", "Lee", "Rich"] =
+             all_users |> Enum.map(& &1.nickname)
 
     all_users =
       User
@@ -530,7 +695,8 @@ defmodule QueryBuilderTest do
       |> QueryBuilder.order_by(desc: :email)
       |> Repo.all()
 
-    assert ["Alice", "Bobby", "Calvin", "Dave", "Eric", "James", "John", "Lee", "Rich"] = all_users |> Enum.map(& &1.nickname)
+    assert ["Alice", "Bobby", "Calvin", "Dave", "Eric", "James", "John", "Lee", "Rich"] =
+             all_users |> Enum.map(& &1.nickname)
 
     assert 9 == length(all_users)
 
@@ -543,66 +709,256 @@ defmodule QueryBuilderTest do
       QueryBuilder.paginate(query, Repo, page_size: 3, cursor: nil, direction: :after)
 
     assert %{
-      cursor_direction: :after,
-      cursor_for_entries_before: _cursor_for_entries_before,
-      cursor_for_entries_after: cursor_for_entries_after,
-      has_more_entries: true,
-      max_page_size: 3
-    } = pagination
+             cursor_direction: :after,
+             cursor_for_entries_before: _cursor_for_entries_before,
+             cursor_for_entries_after: cursor_for_entries_after,
+             has_more_entries: true,
+             max_page_size: 3
+           } = pagination
 
     assert ["Alice", "Bobby", "Calvin"] = paginated_entries |> Enum.map(& &1.nickname)
 
     %{paginated_entries: paginated_entries, pagination: pagination} =
-      QueryBuilder.paginate(query, Repo, page_size: 3, cursor: cursor_for_entries_after, direction: :after)
+      QueryBuilder.paginate(query, Repo,
+        page_size: 3,
+        cursor: cursor_for_entries_after,
+        direction: :after
+      )
 
     assert %{
-      cursor_direction: :after,
-      cursor_for_entries_before: _cursor_for_entries_before,
-      cursor_for_entries_after: cursor_for_entries_after,
-      has_more_entries: true,
-      max_page_size: 3
-    } = pagination
+             cursor_direction: :after,
+             cursor_for_entries_before: _cursor_for_entries_before,
+             cursor_for_entries_after: cursor_for_entries_after,
+             has_more_entries: true,
+             max_page_size: 3
+           } = pagination
 
     assert ["Dave", "Eric", "James"] = paginated_entries |> Enum.map(& &1.nickname)
 
     %{paginated_entries: paginated_entries, pagination: pagination} =
-      QueryBuilder.paginate(query, Repo, page_size: 3, cursor: cursor_for_entries_after, direction: :after)
+      QueryBuilder.paginate(query, Repo,
+        page_size: 3,
+        cursor: cursor_for_entries_after,
+        direction: :after
+      )
 
     assert %{
-      cursor_direction: :after,
-      cursor_for_entries_before: cursor_for_entries_before,
-      cursor_for_entries_after: _cursor_for_entries_after,
-      has_more_entries: false,
-      max_page_size: 3
-    } = pagination
+             cursor_direction: :after,
+             cursor_for_entries_before: cursor_for_entries_before,
+             cursor_for_entries_after: _cursor_for_entries_after,
+             has_more_entries: false,
+             max_page_size: 3
+           } = pagination
 
     assert ["John", "Lee", "Rich"] = paginated_entries |> Enum.map(& &1.nickname)
 
     %{paginated_entries: paginated_entries, pagination: pagination} =
-      QueryBuilder.paginate(query, Repo, page_size: 3, cursor: cursor_for_entries_before, direction: :before)
+      QueryBuilder.paginate(query, Repo,
+        page_size: 3,
+        cursor: cursor_for_entries_before,
+        direction: :before
+      )
 
     assert %{
-      cursor_direction: :before,
-      cursor_for_entries_before: cursor_for_entries_before,
-      cursor_for_entries_after: _cursor_for_entries_after,
-      has_more_entries: true,
-      max_page_size: 3
-    } = pagination
+             cursor_direction: :before,
+             cursor_for_entries_before: cursor_for_entries_before,
+             cursor_for_entries_after: _cursor_for_entries_after,
+             has_more_entries: true,
+             max_page_size: 3
+           } = pagination
 
     assert ["Dave", "Eric", "James"] = paginated_entries |> Enum.map(& &1.nickname)
 
     %{paginated_entries: paginated_entries, pagination: pagination} =
-      QueryBuilder.paginate(query, Repo, page_size: 3, cursor: cursor_for_entries_before, direction: :before)
+      QueryBuilder.paginate(query, Repo,
+        page_size: 3,
+        cursor: cursor_for_entries_before,
+        direction: :before
+      )
 
     assert %{
-      cursor_direction: :before,
-      cursor_for_entries_before: _cursor_for_entries_before,
-      cursor_for_entries_after: _cursor_for_entries_after,
-      has_more_entries: false,
-      max_page_size: 3
-    } = pagination
+             cursor_direction: :before,
+             cursor_for_entries_before: _cursor_for_entries_before,
+             cursor_for_entries_after: _cursor_for_entries_after,
+             has_more_entries: false,
+             max_page_size: 3
+           } = pagination
 
     assert ["Alice", "Bobby", "Calvin"] = paginated_entries |> Enum.map(& &1.nickname)
+  end
+
+  test "cursor pagination preserves preloads" do
+    %{
+      paginated_entries: [first | _],
+      pagination: %{cursor_for_entries_after: cursor}
+    } =
+      User
+      |> QueryBuilder.preload(:role)
+      |> QueryBuilder.order_by(:role, asc: :name@role)
+      |> QueryBuilder.paginate(Repo, page_size: 2, cursor: nil, direction: :after)
+
+    assert Ecto.assoc_loaded?(first.role)
+
+    %{paginated_entries: [first2 | _]} =
+      User
+      |> QueryBuilder.preload(:role)
+      |> QueryBuilder.order_by(:role, asc: :name@role)
+      |> QueryBuilder.paginate(Repo, page_size: 2, cursor: cursor, direction: :after)
+
+    assert Ecto.assoc_loaded?(first2.role)
+  end
+
+  test "cursor pagination uses a single query in the happy flow (root cursor fields + no joins)" do
+    query =
+      User
+      |> QueryBuilder.order_by(asc: :nickname, desc: :email)
+      |> QueryBuilder.order_by(desc: :email)
+
+    {_result, query_count} =
+      with_repo_query_count(fn ->
+        QueryBuilder.paginate(query, Repo, page_size: 3, cursor: nil, direction: :after)
+      end)
+
+    assert query_count == 1
+  end
+
+  test "cursor pagination stays single-query with to-one joins (e.g. belongs_to)" do
+    query =
+      User
+      |> QueryBuilder.where(:role, name@role: "author")
+      |> QueryBuilder.order_by(asc: :nickname)
+
+    {_result, query_count} =
+      with_repo_query_count(fn ->
+        QueryBuilder.paginate(query, Repo, page_size: 2, cursor: nil, direction: :after)
+      end)
+
+    assert query_count == 1
+  end
+
+  test "cursor pagination stays single-query when ordering by a to-one association field token and the assoc is preloaded" do
+    query =
+      User
+      |> QueryBuilder.preload(:role)
+      |> QueryBuilder.order_by(:role, asc: :name@role)
+
+    {_result, query_count} =
+      with_repo_query_count(fn ->
+        QueryBuilder.paginate(query, Repo, page_size: 2, cursor: nil, direction: :after)
+      end)
+
+    assert query_count == 1
+  end
+
+  test "cursor pagination does not use the single-query fast path when an @token resolves to a nested association with the same name as a root association" do
+    query =
+      QueryBuilder.CommentLike
+      |> QueryBuilder.preload([comment: :user])
+      |> QueryBuilder.order_by([comment: :user], asc: :nickname@user)
+
+    {_result, query_count} =
+      with_repo_query_count(fn ->
+        QueryBuilder.paginate(query, Repo, page_size: 2, cursor: nil, direction: :after)
+      end)
+
+    assert query_count == 2
+  end
+
+  test "cursor pagination avoids preloading the sentinel row for to-many preloads (uses ids-first)" do
+    query =
+      User
+      |> QueryBuilder.preload(:authored_articles)
+      |> QueryBuilder.order_by(asc: :nickname)
+
+    {%{paginated_entries: [first]}, queries} =
+      with_repo_queries(fn ->
+        QueryBuilder.paginate(query, Repo, page_size: 1, cursor: nil, direction: :after)
+      end)
+
+    assert Ecto.assoc_loaded?(first.authored_articles)
+
+    preload_queries =
+      Enum.filter(queries, fn metadata ->
+        query = to_string(metadata[:query] || "")
+        String.contains?(query, ~s(FROM "articles"))
+      end)
+
+    assert [preload_query] = preload_queries
+
+    [user_ids_param] = preload_query[:params]
+
+    user_ids =
+      case user_ids_param do
+        ids when is_list(ids) -> ids
+        id when is_integer(id) -> [id]
+      end
+
+    assert Enum.sort(user_ids) == [first.id]
+  end
+
+  test "cursor pagination uses the ids-first strategy when to-many joins are present" do
+    query =
+      User
+      |> QueryBuilder.where([authored_articles: :comments], title@comments: "It's great!")
+      |> QueryBuilder.order_by(asc: :nickname)
+
+    {_result, query_count} =
+      with_repo_query_count(fn ->
+        QueryBuilder.paginate(query, Repo, page_size: 2, cursor: nil, direction: :after)
+      end)
+
+    assert query_count == 2
+  end
+
+  test "paginate raises when cursor pagination is disabled and to-many joins are present (unless unsafe opt-in)" do
+    character_length = fn field, get_binding_fun ->
+      {field, binding} = get_binding_fun.(field)
+      Ecto.Query.dynamic([{^binding, x}], fragment("character_length(?)", field(x, ^field)))
+    end
+
+    query =
+      User
+      |> QueryBuilder.where([authored_articles: :comments], title@comments: "It's great!")
+      |> QueryBuilder.order_by(asc: &character_length.(:nickname, &1))
+
+    assert_raise ArgumentError, ~r/unsafe_sql_row_pagination/, fn ->
+      QueryBuilder.paginate(query, Repo, page_size: 2, cursor: nil, direction: :after)
+    end
+
+    %{paginated_entries: entries} =
+      QueryBuilder.paginate(query, Repo,
+        page_size: 2,
+        cursor: nil,
+        direction: :after,
+        unsafe_sql_row_pagination?: true
+      )
+
+    assert is_list(entries)
+  end
+
+  test "paginate raises when cursor pagination is disabled (custom order_by), unless unsafe opt-in" do
+    character_length = fn field, get_binding_fun ->
+      {field, binding} = get_binding_fun.(field)
+      Ecto.Query.dynamic([{^binding, x}], fragment("character_length(?)", field(x, ^field)))
+    end
+
+    query =
+      User
+      |> QueryBuilder.order_by(asc: &character_length.(:nickname, &1))
+
+    assert_raise ArgumentError, ~r/unsafe_sql_row_pagination/, fn ->
+      QueryBuilder.paginate(query, Repo, page_size: 2, cursor: nil, direction: :after)
+    end
+
+    %{paginated_entries: entries} =
+      QueryBuilder.paginate(query, Repo,
+        page_size: 2,
+        cursor: nil,
+        direction: :after,
+        unsafe_sql_row_pagination?: true
+      )
+
+    assert is_list(entries)
   end
 
   test "cursor pagination with invalid direction" do
@@ -610,6 +966,50 @@ defmodule QueryBuilderTest do
 
     assert_raise ArgumentError, ~r/cursor direction/, fn ->
       QueryBuilder.paginate(query, Repo, page_size: 3, direction: :invalid)
+    end
+  end
+
+  test "cursor pagination raises on invalid cursor string" do
+    query = QueryBuilder.order_by(User, asc: :nickname)
+
+    assert_raise ArgumentError, ~r/invalid cursor/, fn ->
+      QueryBuilder.paginate(query, Repo, page_size: 3, cursor: "not-a-cursor", direction: :after)
+    end
+  end
+
+  test "cursor pagination raises on empty cursor string" do
+    query = QueryBuilder.order_by(User, asc: :nickname)
+
+    assert_raise ArgumentError, ~r/empty string/, fn ->
+      QueryBuilder.paginate(query, Repo, page_size: 3, cursor: "", direction: :after)
+    end
+  end
+
+  test "cursor pagination raises on unknown repo adapter when using :asc/:desc (NULL ordering)" do
+    query = QueryBuilder.order_by(User, asc: :nickname)
+
+    assert_raise ArgumentError, ~r/NULL|adapter/, fn ->
+      QueryBuilder.paginate(query, UnknownAdapterRepo,
+        page_size: 1,
+        cursor: %{"nickname" => "Alice", "id" => 100},
+        direction: :after
+      )
+    end
+  end
+
+  test "cursor pagination raises when cursor keys do not match the query order_by fields" do
+    query = QueryBuilder.order_by(User, asc: :nickname)
+
+    assert_raise ArgumentError, ~r/missing/, fn ->
+      QueryBuilder.paginate(query, Repo, page_size: 3, cursor: %{"id" => 100}, direction: :after)
+    end
+  end
+
+  test "cursor pagination raises on empty cursor map" do
+    query = QueryBuilder.order_by(User, asc: :nickname)
+
+    assert_raise ArgumentError, ~r/cursor map cannot be empty/, fn ->
+      QueryBuilder.paginate(query, Repo, page_size: 3, cursor: %{}, direction: :after)
     end
   end
 
@@ -629,9 +1029,9 @@ defmodule QueryBuilderTest do
 
     assert 3 == length(three_users_not_bob)
 
-    query = from u in User, limit: 4
-    query = from u in query, limit: 3
-    query = from u in query, limit: 2
+    query = from(u in User, limit: 4)
+    query = from(u in query, limit: 3)
+    query = from(u in query, limit: 2)
     entries = Repo.all(query)
     assert 2 == length(entries)
 

@@ -4,18 +4,9 @@ defmodule QueryBuilder.Query do
     ecto_query: nil,
     operations: []
   )
-end
 
-defimpl Inspect, for: QueryBuilder.Query do
-  def inspect(query, opts) do
-    query
-    |> Ecto.Queryable.to_query()
-    |> Inspect.inspect(opts)
-  end
-end
-
-defimpl Ecto.Queryable, for: QueryBuilder.Query do
-  def to_query(%{ecto_query: ecto_query} = query) do
+  @doc false
+  def to_query_and_assoc_list(%__MODULE__{ecto_query: ecto_query} = query) do
     source_schema = QueryBuilder.Utils.root_schema(ecto_query)
 
     %{ecto_query: ecto_query, operations: operations} =
@@ -62,10 +53,25 @@ defimpl Ecto.Queryable, for: QueryBuilder.Query do
           |> apply(type, [ecto_query | [assoc_list | args]])
       end)
 
-    Ecto.Queryable.to_query(ecto_query)
+    {Ecto.Queryable.to_query(ecto_query), assoc_list}
   end
 
   defp authorizer() do
     Application.get_env(:query_builder, :authorizer)
+  end
+end
+
+defimpl Inspect, for: QueryBuilder.Query do
+  def inspect(query, opts) do
+    query
+    |> Ecto.Queryable.to_query()
+    |> Inspect.inspect(opts)
+  end
+end
+
+defimpl Ecto.Queryable, for: QueryBuilder.Query do
+  def to_query(%QueryBuilder.Query{} = query) do
+    {ecto_query, _assoc_list} = QueryBuilder.Query.to_query_and_assoc_list(query)
+    ecto_query
   end
 end
