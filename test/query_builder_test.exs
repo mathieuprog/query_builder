@@ -787,6 +787,16 @@ defmodule QueryBuilderTest do
     assert ["Alice", "Bobby", "Calvin"] = paginated_entries |> Enum.map(& &1.nickname)
   end
 
+  test "paginate raises when the base ecto_query already has order_by clauses (ordering must be expressed via QueryBuilder.order_by)" do
+    base_query = from(u in User, order_by: [asc: u.nickname])
+
+    query = QueryBuilder.new(base_query)
+
+    assert_raise ArgumentError, ~r/base.*order_by|QueryBuilder\.order_by/i, fn ->
+      QueryBuilder.paginate(query, Repo, page_size: 2, cursor: nil, direction: :after)
+    end
+  end
+
   test "cursor pagination preserves preloads" do
     %{
       paginated_entries: [first | _],
