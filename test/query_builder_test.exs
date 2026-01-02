@@ -442,6 +442,201 @@ defmodule QueryBuilderTest do
     assert 1 == length(alice)
   end
 
+  test "where with custom filter function supports association tokens" do
+    lower_role_name_equals_admin = fn resolve ->
+      {field, role_binding} = resolve.(:name@role)
+      dynamic([{^role_binding, r}], fragment("lower(?)", field(r, ^field)) == ^"admin")
+    end
+
+    admin_users =
+      User
+      |> QueryBuilder.where(:role, [lower_role_name_equals_admin])
+      |> Repo.all()
+      |> Enum.map(& &1.name)
+      |> Enum.sort()
+
+    assert admin_users == ["Dave", "Richard"]
+  end
+
+  test "where_any/2 builds OR filters from groups" do
+    users =
+      User
+      |> QueryBuilder.where_any([[name: "Alice"], [name: "Bob"]])
+      |> Repo.all()
+      |> Enum.map(& &1.name)
+      |> Enum.sort()
+
+    assert users == ["Alice", "Bob"]
+  end
+
+  test "where_any/3 supports association tokens" do
+    users =
+      User
+      |> QueryBuilder.where_any(:role, [[name@role: "admin"], [name@role: "publisher"]])
+      |> Repo.all()
+      |> Enum.map(& &1.name)
+      |> Enum.sort()
+
+    assert users == ["Calvin", "Dave", "Richard"]
+  end
+
+  test "from_opts/2 supports where_any without a tuple" do
+    users =
+      User
+      |> QueryBuilder.from_opts(where_any: [[name: "Alice"], [name: "Bob"]])
+      |> Repo.all()
+      |> Enum.map(& &1.name)
+      |> Enum.sort()
+
+    assert users == ["Alice", "Bob"]
+  end
+
+  test "where_exists avoids duplicate root rows for to-many association filters" do
+    users_with_join_multiplication =
+      User
+      |> QueryBuilder.where([authored_articles: :comments], title@comments: "It's great!")
+      |> Repo.all()
+
+    assert length(users_with_join_multiplication) >
+             length(Enum.uniq_by(users_with_join_multiplication, & &1.id))
+
+    users =
+      User
+      |> QueryBuilder.where_exists_subquery(
+        [authored_articles: :comments],
+        where: [title@comments: "It's great!"],
+        scope: []
+      )
+      |> Repo.all()
+
+    assert users == Enum.uniq_by(users, & &1.id)
+
+    assert users
+           |> Enum.map(& &1.name)
+           |> Enum.sort() == ["Alice", "Bob", "Charlie"]
+  end
+
+  test "where_exists_subquery requires an explicit scope option" do
+    assert_raise ArgumentError, ~r/requires an explicit `scope:` option/, fn ->
+      User
+      |> QueryBuilder.where_exists_subquery(
+        :authored_articles,
+        where: [title@authored_articles: "ELIXIR V1.9 RELEASED"]
+      )
+    end
+  end
+
+  test "where_not_exists_subquery requires an explicit scope option" do
+    assert_raise ArgumentError, ~r/requires an explicit `scope:` option/, fn ->
+      User
+      |> QueryBuilder.where_not_exists_subquery(
+        :authored_articles,
+        where: [title@authored_articles: "ELIXIR V1.9 RELEASED"]
+      )
+    end
+  end
+
+  test "where_exists_subquery does not support or: (use where_any: instead)" do
+    assert_raise ArgumentError, ~r/does not support `or:`/, fn ->
+      User
+      |> QueryBuilder.where_exists_subquery(
+        [authored_articles: :comments],
+        where: [title@comments: "It's great!"],
+        or: [title@comments: "Not great!"],
+        scope: []
+      )
+    end
+  end
+
+  test "where_not_exists_subquery does not support or: (use where_any: instead)" do
+    assert_raise ArgumentError, ~r/does not support `or:`/, fn ->
+      User
+      |> QueryBuilder.where_not_exists_subquery(
+        [authored_articles: :comments],
+        where: [title@comments: "It's great!"],
+        or: [title@comments: "Not great!"],
+        scope: []
+      )
+    end
+  end
+
+  test "where_exists_subquery supports where_any" do
+    users =
+      User
+      |> QueryBuilder.where_exists_subquery(
+        [authored_articles: :comments],
+        where_any: [[title@comments: "It's great!"], [title@comments: "Not great!"]],
+        scope: []
+      )
+      |> Repo.all()
+
+    assert users == Enum.uniq_by(users, & &1.id)
+  end
+
+  test "where_exists_subquery where + where_any applies where to all OR branches" do
+    reader = Repo.get!(User, 102)
+    bob = Repo.get!(User, 101)
+
+    zed = insert(:user, %{name: "Zed"})
+    zed_article = insert(:article, %{author: zed, publisher: zed})
+    _ = insert(:comment, %{article: zed_article, user: bob, title: "Not great!"})
+
+    users =
+      User
+      |> QueryBuilder.where_exists_subquery(
+        [authored_articles: :comments],
+        where: [user_id@comments: reader.id],
+        where_any: [[title@comments: "It's great!"], [title@comments: "Not great!"]],
+        scope: []
+      )
+      |> Repo.all()
+
+    assert users == Enum.uniq_by(users, & &1.id)
+
+    assert users
+           |> Enum.map(& &1.name)
+           |> Enum.sort() == ["Alice", "Bob", "Charlie"]
+  end
+
+  test "where_not_exists filters out roots that have matching associated rows" do
+    users =
+      User
+      |> QueryBuilder.where_not_exists_subquery(
+        [authored_articles: :comments],
+        where: [title@comments: "It's great!"],
+        scope: []
+      )
+      |> Repo.all()
+
+    assert users == Enum.uniq_by(users, & &1.id)
+
+    assert users
+           |> Enum.map(& &1.name)
+           |> Enum.sort() ==
+             [
+               "An% we_ird %name_%",
+               "An_ we_ird %name_%",
+               "Calvin",
+               "Dave",
+               "Eric",
+               "Richard"
+             ]
+  end
+
+  test "where_exists supports filtering on the first association level via tokens" do
+    users =
+      User
+      |> QueryBuilder.where_exists_subquery(
+        :authored_articles,
+        where: [title@authored_articles: "ELIXIR V1.9 RELEASED"],
+        scope: []
+      )
+      |> Repo.all()
+
+    assert users == Enum.uniq_by(users, & &1.id)
+    assert Enum.map(users, & &1.name) == ["Alice"]
+  end
+
   test "maybe where" do
     maybe_bob =
       User

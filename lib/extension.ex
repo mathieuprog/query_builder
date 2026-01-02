@@ -76,6 +76,16 @@ defmodule QueryBuilder.Extension do
       defdelegate preload(query, assoc_fields), to: QueryBuilder
       defdelegate where(query, filters), to: QueryBuilder
       defdelegate where(query, assoc_fields, filters, or_filters \\ []), to: QueryBuilder
+      defdelegate where_exists(query, assoc_fields, filters, or_filters \\ []), to: QueryBuilder
+
+      defdelegate where_not_exists(query, assoc_fields, filters, or_filters \\ []),
+        to: QueryBuilder
+
+      defdelegate where_exists_subquery(query, assoc_fields, opts \\ []), to: QueryBuilder
+
+      defdelegate where_not_exists_subquery(query, assoc_fields, opts \\ []),
+        to: QueryBuilder
+
       defdelegate offset(query, value), to: QueryBuilder
       defdelegate limit(query, value), to: QueryBuilder
 

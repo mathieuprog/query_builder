@@ -785,6 +785,288 @@ defmodule QueryBuilder do
   end
 
   @doc ~S"""
+  An OR where query expression (an OR of AND groups).
+
+  Examples:
+
+  ```elixir
+  QueryBuilder.where_any(query, [[firstname: "John"], [firstname: "Alice", lastname: "Doe"]])
+  ```
+
+  ```elixir
+  QueryBuilder.where_any(query, :role, [[name@role: "admin"], [name@role: "author"]])
+  ```
+  """
+  def where_any(query, or_groups) do
+    where_any(query, [], or_groups)
+  end
+
+  def where_any(query, assoc_fields, or_groups)
+
+  def where_any(%QueryBuilder.Query{} = query, assoc_fields, or_groups) do
+    or_groups = normalize_or_groups!(or_groups, :where_any, "where_any/2 and where_any/3")
+
+    case Enum.reject(or_groups, &(&1 == [])) do
+      [] ->
+        query
+
+      [first | rest] ->
+        or_filters = Enum.map(rest, &{:or, &1})
+        where(query, assoc_fields, first, or_filters)
+    end
+  end
+
+  def where_any(ecto_query, assoc_fields, or_groups) do
+    ecto_query = ensure_query_has_binding(ecto_query)
+    where_any(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields, or_groups)
+  end
+
+  @doc ~S"""
+  A correlated `EXISTS(...)` subquery filter.
+
+  This is the explicit alternative to `where/4` when filtering through to-many
+  associations would otherwise duplicate root rows (SQL join multiplication).
+
+  Example:
+  ```
+  User
+  |> QueryBuilder.where_exists_subquery(
+    [authored_articles: :comments],
+    where: [title@comments: "It's great!"],
+    scope: []
+  )
+  |> Repo.all()
+  ```
+
+  `scope:` is **required** to make the “new query block” boundary explicit. It is
+  applied inside the `EXISTS(...)` subquery (and is not inferred from outer joins).
+  Pass `scope: []` to explicitly declare “no extra scoping”.
+
+  `where:` adds AND filters inside the subquery. To express OR groups, use
+  `where_any: [[...], ...]`.
+  """
+  def where_exists_subquery(query, assoc_fields, opts \\ [])
+
+  def where_exists_subquery(%QueryBuilder.Query{} = query, assoc_fields, opts) do
+    if assoc_fields in [nil, []] do
+      raise ArgumentError,
+            "where_exists_subquery/3 requires a non-empty assoc_fields argument " <>
+              "(e.g. `where_exists_subquery(:comments, where: [..], scope: ..)` or `where_exists_subquery([articles: :comments], where: [..], scope: ..)`)"
+    end
+
+    {where_any, opts} = Keyword.pop(opts, :where_any, :__missing__)
+    {where_filters, opts} = Keyword.pop(opts, :where, [])
+
+    {scope, opts} =
+      case Keyword.pop(opts, :scope, :__missing__) do
+        {:__missing__, _} ->
+          raise ArgumentError,
+                "where_exists_subquery/3 requires an explicit `scope:` option; " <>
+                  "pass `scope: []` to explicitly declare no extra scoping"
+
+        {scope, opts} when is_list(scope) ->
+          {scope, opts}
+
+        {other, _} ->
+          raise ArgumentError,
+                "where_exists_subquery/3 expects `scope:` to be a list of filters, got: #{inspect(other)}"
+      end
+
+    if is_nil(where_filters) or not is_list(where_filters) do
+      raise ArgumentError,
+            "where_exists_subquery/3 expects `where:` to be a list of filters; got: #{inspect(where_filters)}"
+    end
+
+    if Keyword.has_key?(opts, :or) do
+      raise ArgumentError,
+            "where_exists_subquery/3 does not support `or:`; use `where_any: [[...], ...]`"
+    end
+
+    where_any_groups =
+      case where_any do
+        :__missing__ -> []
+        other -> normalize_or_groups!(other, :where_any, "where_exists_subquery/3")
+      end
+
+    where_any_groups = Enum.reject(where_any_groups, &(&1 == []))
+
+    {predicate_filters, predicate_or_filters} =
+      case where_any_groups do
+        [] -> {[], []}
+        [first | rest] -> {first, Enum.map(rest, &{:or, &1})}
+      end
+
+    effective_scope_filters = scope ++ where_filters
+
+    unknown_opt_keys =
+      opts
+      |> Keyword.keys()
+      |> Enum.uniq()
+
+    if unknown_opt_keys != [] do
+      raise ArgumentError,
+            "unknown options for where_exists_subquery/3: #{inspect(unknown_opt_keys)} " <>
+              "(supported: :where, :scope, :where_any)"
+    end
+
+    %{
+      query
+      | operations: [
+          %{
+            type: :where_exists_subquery,
+            assocs: [],
+            args: [
+              assoc_fields,
+              effective_scope_filters,
+              predicate_filters,
+              predicate_or_filters
+            ]
+          }
+          | query.operations
+        ]
+    }
+  end
+
+  def where_exists_subquery(ecto_query, assoc_fields, opts) do
+    ecto_query = ensure_query_has_binding(ecto_query)
+
+    where_exists_subquery(
+      %QueryBuilder.Query{ecto_query: ecto_query},
+      assoc_fields,
+      opts
+    )
+  end
+
+  @doc ~S"""
+  A correlated `NOT EXISTS(...)` subquery filter.
+
+  Example:
+  ```
+  User
+  |> QueryBuilder.where_not_exists_subquery(:authored_articles, where: [], scope: [])
+  |> Repo.all()
+  ```
+
+  `where:` adds AND filters inside the subquery. To express OR groups, use
+  `where_any: [[...], ...]`.
+  """
+  def where_not_exists_subquery(query, assoc_fields, opts \\ [])
+
+  def where_not_exists_subquery(%QueryBuilder.Query{} = query, assoc_fields, opts) do
+    if assoc_fields in [nil, []] do
+      raise ArgumentError,
+            "where_not_exists_subquery/3 requires a non-empty assoc_fields argument " <>
+              "(e.g. `where_not_exists_subquery(:comments, where: [..], scope: ..)` or `where_not_exists_subquery([articles: :comments], where: [..], scope: ..)`)"
+    end
+
+    {where_any, opts} = Keyword.pop(opts, :where_any, :__missing__)
+    {where_filters, opts} = Keyword.pop(opts, :where, [])
+
+    {scope, opts} =
+      case Keyword.pop(opts, :scope, :__missing__) do
+        {:__missing__, _} ->
+          raise ArgumentError,
+                "where_not_exists_subquery/3 requires an explicit `scope:` option; " <>
+                  "pass `scope: []` to explicitly declare no extra scoping"
+
+        {scope, opts} when is_list(scope) ->
+          {scope, opts}
+
+        {other, _} ->
+          raise ArgumentError,
+                "where_not_exists_subquery/3 expects `scope:` to be a list of filters, got: #{inspect(other)}"
+      end
+
+    if is_nil(where_filters) or not is_list(where_filters) do
+      raise ArgumentError,
+            "where_not_exists_subquery/3 expects `where:` to be a list of filters; got: #{inspect(where_filters)}"
+    end
+
+    if Keyword.has_key?(opts, :or) do
+      raise ArgumentError,
+            "where_not_exists_subquery/3 does not support `or:`; use `where_any: [[...], ...]`"
+    end
+
+    where_any_groups =
+      case where_any do
+        :__missing__ -> []
+        other -> normalize_or_groups!(other, :where_any, "where_not_exists_subquery/3")
+      end
+
+    where_any_groups = Enum.reject(where_any_groups, &(&1 == []))
+
+    {predicate_filters, predicate_or_filters} =
+      case where_any_groups do
+        [] -> {[], []}
+        [first | rest] -> {first, Enum.map(rest, &{:or, &1})}
+      end
+
+    effective_scope_filters = scope ++ where_filters
+
+    unknown_opt_keys =
+      opts
+      |> Keyword.keys()
+      |> Enum.uniq()
+
+    if unknown_opt_keys != [] do
+      raise ArgumentError,
+            "unknown options for where_not_exists_subquery/3: #{inspect(unknown_opt_keys)} " <>
+              "(supported: :where, :scope, :where_any)"
+    end
+
+    %{
+      query
+      | operations: [
+          %{
+            type: :where_not_exists_subquery,
+            assocs: [],
+            args: [
+              assoc_fields,
+              effective_scope_filters,
+              predicate_filters,
+              predicate_or_filters
+            ]
+          }
+          | query.operations
+        ]
+    }
+  end
+
+  def where_not_exists_subquery(ecto_query, assoc_fields, opts) do
+    ecto_query = ensure_query_has_binding(ecto_query)
+
+    where_not_exists_subquery(
+      %QueryBuilder.Query{ecto_query: ecto_query},
+      assoc_fields,
+      opts
+    )
+  end
+
+  def where_exists_subquery(_query, _assoc_fields, _filters, _opts) do
+    raise ArgumentError,
+          "where_exists_subquery/4 was replaced by where_exists_subquery/3; " <>
+            "use `where_exists_subquery(assoc_fields, where: [...], where_any: [[...], ...], scope: [...])`"
+  end
+
+  def where_not_exists_subquery(_query, _assoc_fields, _filters, _opts) do
+    raise ArgumentError,
+          "where_not_exists_subquery/4 was replaced by where_not_exists_subquery/3; " <>
+            "use `where_not_exists_subquery(assoc_fields, where: [...], where_any: [[...], ...], scope: [...])`"
+  end
+
+  def where_exists(_query, _assoc_fields, _filters, _or_filters \\ []) do
+    raise ArgumentError,
+          "where_exists/4 was renamed to where_exists_subquery/3; " <>
+            "use `where_exists_subquery(assoc_fields, where: [...], scope: [...])`"
+  end
+
+  def where_not_exists(_query, _assoc_fields, _filters, _or_filters \\ []) do
+    raise ArgumentError,
+          "where_not_exists/4 was renamed to where_not_exists_subquery/3; " <>
+            "use `where_not_exists_subquery(assoc_fields, where: [...], scope: [...])`"
+  end
+
+  @doc ~S"""
   Run `QueryBuilder.where/2` only if given condition is met.
   """
   def maybe_where(query, true, filters) do
@@ -972,6 +1254,30 @@ defmodule QueryBuilder do
   def from_list(_query, _opts) do
     raise ArgumentError,
           "from_list/2 was renamed to from_opts/2; please update your call sites"
+  end
+
+  defp normalize_or_groups!(or_groups, opt_key, context) do
+    cond do
+      is_nil(or_groups) ->
+        raise ArgumentError,
+              "#{context} expects `#{opt_key}:` to be a list of filter groups; got nil"
+
+      Keyword.keyword?(or_groups) ->
+        raise ArgumentError,
+              "#{context} expects `#{opt_key}:` to be a list of filter groups like `[[...], [...]]`; " <>
+                "got a keyword list. Wrap it in a list if you intended a single group."
+
+      not is_list(or_groups) ->
+        raise ArgumentError,
+              "#{context} expects `#{opt_key}:` to be a list of filter groups like `[[...], [...]]`; got: #{inspect(or_groups)}"
+
+      Enum.any?(or_groups, &(not is_list(&1))) ->
+        raise ArgumentError,
+              "#{context} expects `#{opt_key}:` groups to be lists (e.g. `[[title: \"A\"], [title: \"B\"]]`); got: #{inspect(or_groups)}"
+
+      true ->
+        or_groups
+    end
   end
 
   defp ensure_query_has_binding(query) do
