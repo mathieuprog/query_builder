@@ -683,6 +683,66 @@ defmodule QueryBuilderTest do
     assert 8 == length(not_deleted_users)
   end
 
+  test "where supports :in with a subquery" do
+    ids =
+      from(u in User,
+        where: u.id in [100, 101],
+        select: u.id
+      )
+
+    users =
+      User
+      |> QueryBuilder.where({:id, :in, ids})
+      |> Repo.all()
+
+    assert users |> Enum.map(& &1.id) |> Enum.sort() == [100, 101]
+  end
+
+  test "where supports :in with an Ecto.SubQuery value" do
+    ids_query =
+      from(u in User,
+        where: u.id in [100, 101],
+        select: u.id
+      )
+
+    ids_subquery = Ecto.Query.subquery(ids_query)
+
+    users =
+      User
+      |> QueryBuilder.where({:id, :in, ids_subquery})
+      |> Repo.all()
+
+    assert users |> Enum.map(& &1.id) |> Enum.sort() == [100, 101]
+  end
+
+  test "where supports :not_in with a subquery" do
+    ids =
+      from(u in User,
+        where: u.id in [100, 101],
+        select: u.id
+      )
+
+    users =
+      User
+      |> QueryBuilder.where({:id, :not_in, ids})
+      |> Repo.all()
+
+    refute Enum.any?(users, &(&1.id in [100, 101]))
+  end
+
+  test "where raises a clear error for :in subqueries without an explicit select" do
+    ids =
+      from(u in User,
+        where: u.id in [100, 101]
+      )
+
+    assert_raise Ecto.QueryError, ~r/explicit select/, fn ->
+      User
+      |> QueryBuilder.where({:id, :in, ids})
+      |> Repo.all()
+    end
+  end
+
   test "where is (not) null" do
     users_without_email =
       User
