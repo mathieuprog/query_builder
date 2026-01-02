@@ -13,6 +13,31 @@ defmodule QueryBuilder do
     %QueryBuilder.Query{ecto_query: ensure_query_has_binding(ecto_query)}
   end
 
+  @doc ~S"""
+  Builds an `Ecto.SubQuery` using QueryBuilder operations.
+
+  This is a convenience wrapper around `from_opts/2` + `Ecto.Query.subquery/1`.
+
+  Example:
+  ```elixir
+  user_ids =
+    QueryBuilder.subquery(User,
+      where: [deleted: false],
+      select: :id
+    )
+
+  Article
+  |> QueryBuilder.where({:author_id, :in, user_ids})
+  |> Repo.all()
+  ```
+  """
+  def subquery(queryable, opts \\ []) do
+    queryable
+    |> from_opts(opts)
+    |> Ecto.Queryable.to_query()
+    |> Ecto.Query.subquery()
+  end
+
   def paginate(%QueryBuilder.Query{} = query, repo, opts \\ []) do
     page_size = Keyword.get(opts, :page_size, default_page_size())
     cursor_direction = Keyword.get(opts, :direction, :after)

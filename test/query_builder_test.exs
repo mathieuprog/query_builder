@@ -729,6 +729,21 @@ defmodule QueryBuilderTest do
     assert users |> Enum.map(& &1.id) |> Enum.sort() == [100, 101]
   end
 
+  test "subquery/2 builds an Ecto.SubQuery from QueryBuilder ops" do
+    ids_subquery =
+      QueryBuilder.subquery(User,
+        where: [{:id, :in, [100, 101]}],
+        select: :id
+      )
+
+    users =
+      User
+      |> QueryBuilder.where({:id, :in, ids_subquery})
+      |> Repo.all()
+
+    assert users |> Enum.map(& &1.id) |> Enum.sort() == [100, 101]
+  end
+
   test "where supports :not_in with a subquery" do
     ids =
       from(u in User,
