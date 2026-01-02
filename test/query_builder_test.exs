@@ -698,6 +698,20 @@ defmodule QueryBuilderTest do
     assert users |> Enum.map(& &1.id) |> Enum.sort() == [100, 101]
   end
 
+  test "where supports :in with a QueryBuilder subquery (QB-style select)" do
+    ids =
+      User
+      |> QueryBuilder.where({:id, :in, [100, 101]})
+      |> QueryBuilder.select(:id)
+
+    users =
+      User
+      |> QueryBuilder.where({:id, :in, ids})
+      |> Repo.all()
+
+    assert users |> Enum.map(& &1.id) |> Enum.sort() == [100, 101]
+  end
+
   test "where supports :in with an Ecto.SubQuery value" do
     ids_query =
       from(u in User,
@@ -730,13 +744,39 @@ defmodule QueryBuilderTest do
     refute Enum.any?(users, &(&1.id in [100, 101]))
   end
 
-  test "where raises a clear error for :in subqueries without an explicit select" do
+  test "where supports :not_in with a QueryBuilder subquery (QB-style select)" do
+    ids =
+      User
+      |> QueryBuilder.where({:id, :in, [100, 101]})
+      |> QueryBuilder.select(:id)
+
+    users =
+      User
+      |> QueryBuilder.where({:id, :not_in, ids})
+      |> Repo.all()
+
+    refute Enum.any?(users, &(&1.id in [100, 101]))
+  end
+
+  test "where raises an error for :in subqueries that don't return a single field" do
     ids =
       from(u in User,
         where: u.id in [100, 101]
       )
 
-    assert_raise Ecto.QueryError, ~r/explicit select/, fn ->
+    assert_raise Ecto.QueryError, ~r/subquery must return a single field/, fn ->
+      User
+      |> QueryBuilder.where({:id, :in, ids})
+      |> Repo.all()
+    end
+  end
+
+  test "where raises an error for :in QueryBuilder subqueries that don't return a single field" do
+    ids =
+      User
+      |> QueryBuilder.where({:id, :in, [100, 101]})
+
+    assert_raise Ecto.QueryError, ~r/subquery must return a single field/, fn ->
       User
       |> QueryBuilder.where({:id, :in, ids})
       |> Repo.all()

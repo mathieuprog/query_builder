@@ -79,26 +79,9 @@ defmodule QueryBuilder.Query.Where do
     Ecto.Query.dynamic([{^binding, x}], field(x, ^field) in ^values)
   end
 
-  defp do_where(query, binding, {field, :in, subqueryable, []})
+  defp do_where(_query, binding, {field, :in, subqueryable, []})
        when is_struct(subqueryable, Ecto.Query) or is_struct(subqueryable, Ecto.SubQuery) or
               is_struct(subqueryable, QueryBuilder.Query) do
-    subquery_query =
-      case subqueryable do
-        %Ecto.SubQuery{query: query} ->
-          query
-
-        other ->
-          Ecto.Queryable.to_query(other)
-      end
-
-    if is_nil(subquery_query.select) do
-      raise Ecto.QueryError,
-        message:
-          "expected an `:in` subquery to have an explicit select (and return a single column); " <>
-            "got query with no select: #{inspect(subquery_query)}",
-        query: query
-    end
-
     Ecto.Query.dynamic([{^binding, x}], field(x, ^field) in subquery(subqueryable))
   end
 
@@ -106,26 +89,9 @@ defmodule QueryBuilder.Query.Where do
     Ecto.Query.dynamic([{^binding, x}], field(x, ^field) not in ^values)
   end
 
-  defp do_where(query, binding, {field, :not_in, subqueryable, []})
+  defp do_where(_query, binding, {field, :not_in, subqueryable, []})
        when is_struct(subqueryable, Ecto.Query) or is_struct(subqueryable, Ecto.SubQuery) or
               is_struct(subqueryable, QueryBuilder.Query) do
-    subquery_query =
-      case subqueryable do
-        %Ecto.SubQuery{query: query} ->
-          query
-
-        other ->
-          Ecto.Queryable.to_query(other)
-      end
-
-    if is_nil(subquery_query.select) do
-      raise Ecto.QueryError,
-        message:
-          "expected a `:not_in` subquery to have an explicit select (and return a single column); " <>
-            "got query with no select: #{inspect(subquery_query)}",
-        query: query
-    end
-
     Ecto.Query.dynamic([{^binding, x}], field(x, ^field) not in subquery(subqueryable))
   end
 
