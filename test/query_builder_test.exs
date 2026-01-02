@@ -1107,6 +1107,80 @@ defmodule QueryBuilderTest do
     end
   end
 
+  test "existing Ecto.Query inputs get the expected root named binding added (non-destructive)" do
+    base_query =
+      from(u in User,
+        where: u.id == 100
+      )
+
+    results =
+      base_query
+      |> QueryBuilder.where(name: "Alice")
+      |> Repo.all()
+
+    assert length(results) == 1
+    assert hd(results).id == 100
+  end
+
+  test "raises when the expected root binding name is already used by a join binding" do
+    query =
+      from(u in User,
+        join: r in assoc(u, :role),
+        as: ^User,
+        where: r.name == "author"
+      )
+
+    assert_raise ArgumentError, ~r/expected root query.*already used/i, fn ->
+      QueryBuilder.where(query, name: "Alice")
+    end
+  end
+
+  test "raises when the root query already has a different named binding" do
+    query =
+      from(u in User,
+        as: :user,
+        where: u.id == 100
+      )
+
+    assert_raise ArgumentError, ~r/from\(query, as: \^.*User\)/, fn ->
+      QueryBuilder.where(query, name: "Alice")
+    end
+  end
+
+  test "raises when the root has a different named binding and the expected binding name is used by a join" do
+    query =
+      from(u in User,
+        as: :user,
+        join: r in assoc(u, :role),
+        as: ^User,
+        where: r.name == "author"
+      )
+
+    assert_raise ArgumentError, ~r/non-root named binding|cannot add it to the root/i, fn ->
+      QueryBuilder.where(query, name: "Alice")
+    end
+  end
+
+  test "raises ArgumentError with a helpful message when passed a non-queryable input" do
+    assert_raise ArgumentError, ~r/expected an Ecto\.Queryable/i, fn ->
+      QueryBuilder.where(:not_a_queryable, name: "Alice")
+    end
+  end
+
+  test "accepts an existing Ecto query whose root is already named with the expected binding" do
+    query =
+      User._query()
+      |> Ecto.Query.where([u], u.id == 100)
+
+    results =
+      query
+      |> QueryBuilder.where(name: "Alice")
+      |> Repo.all()
+
+    assert length(results) == 1
+    assert hd(results).id == 100
+  end
+
   test "cursor pagination preserves preloads" do
     %{
       paginated_entries: [first | _],

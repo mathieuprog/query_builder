@@ -1414,23 +1414,48 @@ defmodule QueryBuilder do
   end
 
   defp ensure_query_has_binding(query) do
-    ecto_query = Ecto.Queryable.to_query(query)
+    ecto_query =
+      try do
+        Ecto.Queryable.to_query(query)
+      rescue
+        Protocol.UndefinedError ->
+          raise ArgumentError,
+                "expected an Ecto.Queryable (schema module, Ecto.Query, or QueryBuilder.Query), got: #{inspect(query)}"
+      end
+
     schema = QueryBuilder.Utils.root_schema(ecto_query)
     binding = schema._binding()
+    root_as = ecto_query.from.as
+    binding_used? = Query.has_named_binding?(ecto_query, binding)
 
-    if Query.has_named_binding?(ecto_query, binding) do
-      ecto_query
-    else
-      case ecto_query.from.as do
-        nil ->
-          Ecto.Query.from(ecto_query, as: ^binding)
+    cond do
+      root_as == binding ->
+        ecto_query
 
-        other ->
-          raise ArgumentError,
-                "expected root query to have named binding #{inspect(binding)} (#{inspect(schema)}), " <>
-                  "but it already has named binding #{inspect(other)}. " <>
-                  "Use `from(query, as: #{inspect(binding)})` before passing it to QueryBuilder."
-      end
+      is_nil(root_as) and binding_used? ->
+        raise ArgumentError,
+              "expected root query to have named binding #{inspect(binding)} (#{inspect(schema)}), " <>
+                "but that binding name is already used by another binding in the query (likely a join). " <>
+                "QueryBuilder relies on #{inspect(binding)} referring to the root schema. " <>
+                "Fix: rename the conflicting binding (avoid `as: #{inspect(binding)}` on joins), " <>
+                "or start from the schema module (e.g. `#{inspect(schema)}`) instead of a pre-joined query."
+
+      is_nil(root_as) ->
+        Ecto.Query.from(ecto_query, as: ^binding)
+
+      true ->
+        collision_hint =
+          if binding_used? do
+            " The query also has a non-root named binding #{inspect(binding)}, so QueryBuilder cannot add it to the root."
+          else
+            ""
+          end
+
+        raise ArgumentError,
+              "expected root query to have named binding #{inspect(binding)} (#{inspect(schema)}), " <>
+                "but it already has named binding #{inspect(root_as)}." <>
+                " Use `from(query, as: ^#{inspect(binding)})` before passing it to QueryBuilder." <>
+                collision_hint
     end
   end
 
