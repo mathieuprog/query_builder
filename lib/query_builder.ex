@@ -822,6 +822,114 @@ defmodule QueryBuilder do
   end
 
   @doc ~S"""
+  A select query expression.
+
+  Selection supports:
+  - a single field token (`:name` or `:name@role`) → selects a single value
+  - a tuple of tokens/values → selects a tuple
+  - a list of field tokens → selects a map keyed by the tokens
+  - a map of output keys to field tokens → selects a map with your keys
+  - a custom 1-arity function escape hatch (receives a token resolver)
+
+  Examples:
+
+  ```elixir
+  User |> QueryBuilder.select(:name) |> Repo.all()
+  ```
+
+  ```elixir
+  User |> QueryBuilder.select([:id, :name]) |> Repo.all()
+  # => [%{id: 100, name: "Alice"}, ...]
+  ```
+
+  ```elixir
+  User |> QueryBuilder.select(:role, %{role_name: :name@role}) |> Repo.all()
+  ```
+
+  ```elixir
+  User |> QueryBuilder.select({:id, :name}) |> Repo.all()
+  # => [{100, "Alice"}, ...]
+  ```
+
+  Like Ecto, only one `select` expression is allowed. Calling `select/*` more
+  than once (or calling `select/*` after `select_merge/*`) raises. Use
+  `select_merge/*` to accumulate fields into the selection.
+
+  Note: `paginate/3` requires selecting the root struct; using `select/*` will make
+  pagination raise (fail-fast).
+  """
+  def select(query, selection) do
+    select(query, [], selection)
+  end
+
+  def select(query, assoc_fields, selection)
+
+  def select(%QueryBuilder.Query{} = query, assoc_fields, selection) do
+    if Enum.any?(query.operations, fn %{type: type} -> type in [:select, :select_merge] end) do
+      raise ArgumentError,
+            "only one select expression is allowed in query; " <>
+              "call `select/*` at most once and use `select_merge/*` to add fields"
+    end
+
+    %{
+      query
+      | operations: [%{type: :select, assocs: assoc_fields, args: [selection]} | query.operations]
+    }
+  end
+
+  def select(ecto_query, assoc_fields, selection) do
+    ecto_query = ensure_query_has_binding(ecto_query)
+    select(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields, selection)
+  end
+
+  @doc ~S"""
+  A `select_merge` query expression.
+
+  This merges a map into the existing selection (Ecto `select_merge` semantics).
+
+  Notes:
+  - If there is no prior `select`, Ecto merges into the root struct by default.
+  - `select_merge` requires explicit keys for `field@assoc` values (use a map).
+  - `paginate/3` requires selecting the root struct; any custom select expression
+    (including `select_merge`) will make pagination raise (fail-fast).
+
+  Examples:
+
+  ```elixir
+  User
+  |> QueryBuilder.select_merge(%{name: :name})
+  |> Repo.all()
+  ```
+
+  ```elixir
+  User
+  |> QueryBuilder.select_merge(:role, %{role_name: :name@role})
+  |> Repo.all()
+  ```
+  """
+  def select_merge(query, selection) do
+    select_merge(query, [], selection)
+  end
+
+  def select_merge(query, assoc_fields, selection)
+
+  def select_merge(%QueryBuilder.Query{} = query, assoc_fields, selection) do
+    validate_select_merge_selection!(selection)
+
+    %{
+      query
+      | operations: [
+          %{type: :select_merge, assocs: assoc_fields, args: [selection]} | query.operations
+        ]
+    }
+  end
+
+  def select_merge(ecto_query, assoc_fields, selection) do
+    ecto_query = ensure_query_has_binding(ecto_query)
+    select_merge(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields, selection)
+  end
+
+  @doc ~S"""
   A correlated `EXISTS(...)` subquery filter.
 
   This is the explicit alternative to `where/4` when filtering through to-many
@@ -1300,4 +1408,48 @@ defmodule QueryBuilder do
       end
     end
   end
+
+  defp validate_select_merge_selection!(selection) when is_function(selection, 1), do: :ok
+  defp validate_select_merge_selection!(%{}), do: :ok
+
+  defp validate_select_merge_selection!(selection)
+       when is_atom(selection) or is_binary(selection) do
+    token = to_string(selection)
+
+    if String.contains?(token, "@") do
+      raise ArgumentError,
+            "select_merge does not support merging a `field@assoc` token without an explicit key; " <>
+              "use a map (e.g. `%{role_name: :name@role}`), got: #{inspect(selection)}"
+    end
+
+    :ok
+  end
+
+  defp validate_select_merge_selection!(selection) when is_list(selection) do
+    if Keyword.keyword?(selection) do
+      :ok
+    else
+      if Enum.any?(selection, fn token ->
+           cond do
+             not (is_atom(token) or is_binary(token)) ->
+               raise ArgumentError,
+                     "select_merge list expects root field tokens (atoms/strings), got: #{inspect(token)}"
+
+             String.contains?(to_string(token), "@") ->
+               true
+
+             true ->
+               false
+           end
+         end) do
+        raise ArgumentError,
+              "select_merge does not support merging a list that contains `field@assoc` tokens; " <>
+                "use a map with explicit keys instead (e.g. `%{role_name: :name@role}`), got: #{inspect(selection)}"
+      end
+
+      :ok
+    end
+  end
+
+  defp validate_select_merge_selection!(_selection), do: :ok
 end

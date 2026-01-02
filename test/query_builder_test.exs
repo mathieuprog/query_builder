@@ -1404,6 +1404,185 @@ defmodule QueryBuilderTest do
     assert 1 == length(skip_two_only_one_not_bob)
   end
 
+  describe "select/select_merge" do
+    test "select/2 selects a single field" do
+      assert User
+             |> QueryBuilder.where(id: 100)
+             |> QueryBuilder.select(:name)
+             |> Repo.one() == "Alice"
+    end
+
+    test "select/2 selects a list of fields into a map keyed by the tokens" do
+      assert User
+             |> QueryBuilder.where(id: 100)
+             |> QueryBuilder.select([:id, :name])
+             |> Repo.one() == %{id: 100, name: "Alice"}
+    end
+
+    test "select/3 selects association fields via tokens" do
+      assert User
+             |> QueryBuilder.where(id: 100)
+             |> QueryBuilder.select(:role, %{user_id: :id, role_name: :name@role})
+             |> Repo.one() == %{user_id: 100, role_name: "author"}
+    end
+
+    test "select/3 supports list selection with association tokens" do
+      assert User
+             |> QueryBuilder.where(id: 100)
+             |> QueryBuilder.select(:role, [:id, :name@role])
+             |> Repo.one() == %{:name@role => "author", id: 100}
+    end
+
+    test "select/2 supports tuple selection" do
+      assert User
+             |> QueryBuilder.where(id: 100)
+             |> QueryBuilder.select({:id, :name})
+             |> Repo.one() == {100, "Alice"}
+    end
+
+    test "select/3 supports tuple selection with association tokens" do
+      assert User
+             |> QueryBuilder.where(id: 100)
+             |> QueryBuilder.select(:role, {:id, :name@role})
+             |> Repo.one() == {100, "author"}
+    end
+
+    test "select/2 supports tuple selection with literal values via {:literal, value}" do
+      assert User
+             |> QueryBuilder.where(id: 100)
+             |> QueryBuilder.select({:id, {:literal, "x"}})
+             |> Repo.one() == {100, "x"}
+    end
+
+    test "select/2 accepts a keyword list (treated like a map)" do
+      assert User
+             |> QueryBuilder.where(id: 100)
+             |> QueryBuilder.select(user_id: :id, user_name: :name)
+             |> Repo.one() == %{user_id: 100, user_name: "Alice"}
+    end
+
+    test "select/2 supports literal values via {:literal, value}" do
+      assert User
+             |> QueryBuilder.where(id: 100)
+             |> QueryBuilder.select(%{constant: {:literal, "x"}, name: :name})
+             |> Repo.one() == %{constant: "x", name: "Alice"}
+    end
+
+    test "select/2 supports a custom select expression function escape hatch" do
+      assert User
+             |> QueryBuilder.where(id: 100)
+             |> QueryBuilder.select(fn resolve ->
+               {field, binding} = resolve.(:name)
+               dynamic([{^binding, u}], fragment("lower(?)", field(u, ^field)))
+             end)
+             |> Repo.one() == "alice"
+    end
+
+    test "select_merge can be called multiple times and accumulates (Ecto conformance)" do
+      ecto_result =
+        from(u in User,
+          where: u.id == 100,
+          select: %{user_id: u.id}
+        )
+        |> select_merge([u], %{user_name: u.name})
+        |> select_merge([u], %{user_email: u.email})
+        |> Repo.one()
+
+      qb_result =
+        User
+        |> QueryBuilder.where(id: 100)
+        |> QueryBuilder.select(%{user_id: :id})
+        |> QueryBuilder.select_merge(%{user_name: :name})
+        |> QueryBuilder.select_merge(%{user_email: :email})
+        |> Repo.one()
+
+      assert qb_result == ecto_result
+    end
+
+    test "Ecto and QueryBuilder both reject calling select twice" do
+      assert_raise Ecto.Query.CompileError,
+                   ~r/only one select expression is allowed in query/,
+                   fn ->
+                     Code.eval_string("""
+                     import Ecto.Query
+                     alias QueryBuilder.User
+
+                     from(u in User)
+                     |> select([u], %{id: u.id})
+                     |> select([u], %{name: u.name})
+                     """)
+                   end
+
+      assert_raise ArgumentError, ~r/only one select expression is allowed/, fn ->
+        User
+        |> QueryBuilder.select(%{id: :id})
+        |> QueryBuilder.select(%{name: :name})
+      end
+    end
+
+    test "Ecto and QueryBuilder both reject calling select after select_merge" do
+      assert_raise Ecto.Query.CompileError,
+                   ~r/only one select expression is allowed in query/,
+                   fn ->
+                     Code.eval_string("""
+                     import Ecto.Query
+                     alias QueryBuilder.User
+
+                     from(u in User)
+                     |> select_merge([u], %{id: u.id})
+                     |> select([u], %{name: u.name})
+                     |> select_merge([u], %{email: u.email})
+                     |> select([u], %{nickname: u.nickname})
+                     """)
+                   end
+
+      assert_raise ArgumentError, ~r/only one select expression is allowed/, fn ->
+        User
+        |> QueryBuilder.select_merge(%{id: :id})
+        |> QueryBuilder.select(%{name: :name})
+      end
+    end
+
+    test "select_merge/2 merges into an existing map select" do
+      assert User
+             |> QueryBuilder.where(id: 100)
+             |> QueryBuilder.select(%{user_id: :id})
+             |> QueryBuilder.select_merge(%{user_name: :name})
+             |> Repo.one() == %{user_id: 100, user_name: "Alice"}
+    end
+
+    test "select_merge/2 accepts a keyword list (treated like a map)" do
+      assert User
+             |> QueryBuilder.where(id: 100)
+             |> QueryBuilder.select(%{user_id: :id})
+             |> QueryBuilder.select_merge(user_name: :name)
+             |> Repo.one() == %{user_id: 100, user_name: "Alice"}
+    end
+
+    test "from_opts supports select with a keyword list" do
+      assert User
+             |> QueryBuilder.from_opts(
+               where: [id: 100],
+               select: [id: :id, name: :name]
+             )
+             |> Repo.one() == %{id: 100, name: "Alice"}
+    end
+
+    test "select_merge/3 supports association field tokens via explicit keys" do
+      assert User
+             |> QueryBuilder.where(id: 100)
+             |> QueryBuilder.select(%{user_id: :id})
+             |> QueryBuilder.select_merge(:role, %{role_name: :name@role})
+             |> Repo.one() == %{user_id: 100, role_name: "author"}
+    end
+
+    test "select_merge raises when given a field@assoc token without an explicit key" do
+      assert_raise ArgumentError, ~r/explicit key/, fn ->
+        User |> QueryBuilder.select_merge(:name@role)
+      end
+    end
+  end
+
   test "extension" do
     # Call custom query functionality directly
     alice =

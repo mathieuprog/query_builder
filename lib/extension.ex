@@ -74,8 +74,14 @@ defmodule QueryBuilder.Extension do
       defdelegate order_by(query, value), to: QueryBuilder
       defdelegate order_by(query, assoc_fields, value), to: QueryBuilder
       defdelegate preload(query, assoc_fields), to: QueryBuilder
+      defdelegate select(query, selection), to: QueryBuilder
+      defdelegate select(query, assoc_fields, selection), to: QueryBuilder
+      defdelegate select_merge(query, selection), to: QueryBuilder
+      defdelegate select_merge(query, assoc_fields, selection), to: QueryBuilder
       defdelegate where(query, filters), to: QueryBuilder
       defdelegate where(query, assoc_fields, filters, or_filters \\ []), to: QueryBuilder
+      defdelegate where_any(query, or_groups), to: QueryBuilder
+      defdelegate where_any(query, assoc_fields, or_groups), to: QueryBuilder
       defdelegate where_exists(query, assoc_fields, filters, or_filters \\ []), to: QueryBuilder
 
       defdelegate where_not_exists(query, assoc_fields, filters, or_filters \\ []),

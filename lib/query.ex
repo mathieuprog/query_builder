@@ -19,6 +19,7 @@ defmodule QueryBuilder.Query do
       end
 
     operations = Enum.reverse(operations)
+    validate_select_operations!(operations)
 
     assoc_list =
       Enum.reduce(operations, [], fn %{assocs: assocs, type: type} = operation,
@@ -58,6 +59,37 @@ defmodule QueryBuilder.Query do
 
   defp authorizer() do
     Application.get_env(:query_builder, :authorizer)
+  end
+
+  defp validate_select_operations!(operations) do
+    select_indexes =
+      operations
+      |> Enum.with_index()
+      |> Enum.flat_map(fn
+        {%{type: :select}, index} -> [index]
+        {_op, _index} -> []
+      end)
+
+    case select_indexes do
+      [] ->
+        :ok
+
+      [select_index] ->
+        if Enum.any?(Enum.take(operations, select_index), fn %{type: type} ->
+             type == :select_merge
+           end) do
+          raise ArgumentError,
+                "only one select expression is allowed in query; " <>
+                  "calling `select/*` after `select_merge/*` is not supported (Ecto semantics)"
+        end
+
+        :ok
+
+      _many ->
+        raise ArgumentError,
+              "only one select expression is allowed in query; " <>
+                "call `select/*` at most once and use `select_merge/*` to add fields"
+    end
   end
 end
 
