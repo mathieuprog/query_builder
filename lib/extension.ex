@@ -70,6 +70,7 @@ defmodule QueryBuilder.Extension do
         to: QueryBuilder
 
       defdelegate new(ecto_query), to: QueryBuilder
+      defdelegate subquery(queryable, opts \\ []), to: QueryBuilder
       defdelegate paginate(query, repo, opts \\ []), to: QueryBuilder
       defdelegate order_by(query, value), to: QueryBuilder
       defdelegate order_by(query, assoc_fields, value), to: QueryBuilder
