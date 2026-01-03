@@ -12,34 +12,11 @@ defmodule QueryBuilder.Query.Preload do
     # `Ecto.Query.preload(query, [articles: a, user: u, role: r], [articles: {a, [user: {u, [role: r]}]}])`
     ecto_query =
       flattened_assoc_data
-      |> Enum.map(fn assoc_data_list ->
-        validate_through_join_prefix!(assoc_data_list)
-
-        assoc_data_list
-        |> Enum.take_while(&join_preload?(ecto_query, &1))
-        |> Enum.map(fn assoc_data ->
-          {assoc_data.assoc_binding, assoc_data.assoc_field}
-        end)
-      end)
-      |> Enum.reject(&(&1 == []))
-      # Get rid of the associations' lists that are redundant;
-      # for example for the 4 lists below:
-      # `[{:binding1, :field1}]`
-      # `[{:binding1, :field1}, {:binding2, :field2}]`
-      # `[{:binding1, :field1}, {:binding2, :field2}]`
-      # `[{:binding1, :field1}, {:binding2, :field2}, {:binding3, :field3}]`
-      # only the last list should be preserved.
-      |> Enum.uniq()
-      |> (fn lists ->
-            Enum.filter(
-              lists,
-              &(!Enum.any?(lists -- [&1], fn list ->
-                  Keyword.equal?(&1, Enum.slice(list, 0, length(&1)))
-                end))
-            )
-          end).()
-      |> Enum.reduce(ecto_query, fn list, ecto_query ->
-        do_preload_with_bindings(ecto_query, list)
+      |> Enum.map(&join_preload_chain_for_path(ecto_query, &1))
+      |> Enum.reject(&Enum.empty?/1)
+      |> maximal_preload_chains()
+      |> Enum.reduce(ecto_query, fn chain, ecto_query ->
+        do_preload_with_bindings(ecto_query, chain)
       end)
 
     # Secondly, give `Ecto.Query.preload/3` the list of associations that have not
@@ -167,4 +144,33 @@ defmodule QueryBuilder.Query.Preload do
   end
 
   defp effective_joined?(_ecto_query, _assoc_data), do: false
+
+  defp join_preload_chain_for_path(ecto_query, assoc_data_list) do
+    validate_through_join_prefix!(assoc_data_list)
+
+    assoc_data_list
+    |> Enum.take_while(&join_preload?(ecto_query, &1))
+    |> Enum.map(fn assoc_data -> {assoc_data.assoc_binding, assoc_data.assoc_field} end)
+  end
+
+  # Removes redundant prefix chains so we don't emit join-preload for both:
+  # - [a]
+  # - [a, b]
+  #
+  # When [a, b] exists, [a] is redundant because Ecto join-preload for [a, b]
+  # already covers [a].
+  defp maximal_preload_chains(chains) do
+    chains = Enum.uniq(chains)
+
+    Enum.filter(chains, fn chain ->
+      not Enum.any?(chains, fn other_chain ->
+        other_chain != chain and prefix_chain?(chain, other_chain)
+      end)
+    end)
+  end
+
+  defp prefix_chain?(prefix, list) do
+    prefix_length = length(prefix)
+    prefix_length <= length(list) and Enum.take(list, prefix_length) == prefix
+  end
 end

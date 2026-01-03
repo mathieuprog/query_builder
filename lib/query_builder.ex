@@ -187,26 +187,10 @@ defmodule QueryBuilder do
     {entries, first_row_cursor_map, last_row_cursor_map, has_more?} =
       if cursor_pagination_supported? do
         if single_query_cursor_pagination_possible?(ecto_query, assoc_list, order_by_list) do
-          entries = repo.all(ecto_query)
-
-          entries =
-            if cursor_direction == :before do
-              Enum.reverse(entries)
-            else
-              entries
-            end
-
-          has_more? = length(entries) == page_size + 1
-
-          entries =
-            if has_more? do
-              case cursor_direction do
-                :before -> tl(entries)
-                :after -> List.delete_at(entries, -1)
-              end
-            else
-              entries
-            end
+          {entries, has_more?} =
+            ecto_query
+            |> repo.all()
+            |> normalize_paginated_rows(page_size, cursor_direction)
 
           first_entry = List.first(entries)
           last_entry = List.last(entries)
@@ -226,24 +210,8 @@ defmodule QueryBuilder do
 
           page_key_rows = repo.all(page_keys_query)
 
-          page_key_rows =
-            if cursor_direction == :before do
-              Enum.reverse(page_key_rows)
-            else
-              page_key_rows
-            end
-
-          has_more? = length(page_key_rows) == page_size + 1
-
-          page_key_rows =
-            if has_more? do
-              case cursor_direction do
-                :before -> tl(page_key_rows)
-                :after -> List.delete_at(page_key_rows, -1)
-              end
-            else
-              page_key_rows
-            end
+          {page_key_rows, has_more?} =
+            normalize_paginated_rows(page_key_rows, page_size, cursor_direction)
 
           ids = Enum.map(page_key_rows, &Map.fetch!(&1, "id"))
 
@@ -280,35 +248,14 @@ defmodule QueryBuilder do
 
           entries = repo.all(entries_query)
 
-          entries =
-            if cursor_direction == :before do
-              Enum.reverse(entries)
-            else
-              entries
-            end
+          entries = reverse_if_before(entries, cursor_direction)
 
           {entries, nil, nil, has_more?}
         else
-          entries = repo.all(ecto_query)
-
-          entries =
-            if cursor_direction == :before do
-              Enum.reverse(entries)
-            else
-              entries
-            end
-
-          has_more? = length(entries) == page_size + 1
-
-          entries =
-            if has_more? do
-              case cursor_direction do
-                :before -> tl(entries)
-                :after -> List.delete_at(entries, -1)
-              end
-            else
-              entries
-            end
+          {entries, has_more?} =
+            ecto_query
+            |> repo.all()
+            |> normalize_paginated_rows(page_size, cursor_direction)
 
           {entries, nil, nil, has_more?}
         end
@@ -518,6 +465,26 @@ defmodule QueryBuilder do
                   "but it was missing from the results"
       end
     end)
+  end
+
+  defp reverse_if_before(rows, :before), do: Enum.reverse(rows)
+  defp reverse_if_before(rows, :after), do: rows
+
+  defp normalize_paginated_rows(rows, page_size, cursor_direction) do
+    rows = reverse_if_before(rows, cursor_direction)
+    has_more? = length(rows) == page_size + 1
+
+    rows =
+      if has_more? do
+        case cursor_direction do
+          :before -> tl(rows)
+          :after -> List.delete_at(rows, -1)
+        end
+      else
+        rows
+      end
+
+    {rows, has_more?}
   end
 
   defp keyset_groups_for_field(prev_fields, field, _dir, nulls, nil) do

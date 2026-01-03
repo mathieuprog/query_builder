@@ -951,21 +951,21 @@ defmodule QueryBuilderTest do
   test "left_join/4 fails fast for nested assoc paths (use left_join_leaf/4 or left_join_path/4)" do
     assert_raise ArgumentError, ~r/left_join_leaf|left_join_path/, fn ->
       User
-      |> QueryBuilder.left_join([authored_articles: :comments])
+      |> QueryBuilder.left_join(authored_articles: :comments)
       |> Repo.all()
     end
   end
 
   test "left_join_leaf/4 uses inner joins for intermediate hops (drops roots with no parent assoc)" do
     refute User
-           |> QueryBuilder.left_join_leaf([authored_articles: :comments])
+           |> QueryBuilder.left_join_leaf(authored_articles: :comments)
            |> QueryBuilder.where(name: "Eric")
            |> Repo.one()
   end
 
   test "left_join_path/4 uses left joins for intermediate hops (keeps roots with no parent assoc)" do
     assert User
-           |> QueryBuilder.left_join_path([authored_articles: :comments])
+           |> QueryBuilder.left_join_path(authored_articles: :comments)
            |> QueryBuilder.where(name: "Eric")
            |> Repo.one()
   end
