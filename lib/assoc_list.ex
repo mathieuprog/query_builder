@@ -8,11 +8,7 @@ defmodule QueryBuilder.AssocList do
     # recursive calls. This struct keeps the recursive function signatures readable.
 
     defstruct source_binding: nil,
-              source_schema: nil,
-              # `bindings` allows to keep track of all the binding names in order to
-              # detect a binding name that is going to be used twice when joining
-              # associations.
-              bindings: []
+              source_schema: nil
   end
 
   @doc ~S"""
@@ -57,8 +53,7 @@ defmodule QueryBuilder.AssocList do
     state = %State{
       # the name of the binding of the query's root schema is the schema itself
       source_binding: source_schema,
-      source_schema: source_schema,
-      bindings: [source_schema]
+      source_schema: source_schema
     }
 
     assoc_list
@@ -140,8 +135,7 @@ defmodule QueryBuilder.AssocList do
   defp do_build(assoc_list, [{assoc_field, nested_assoc_fields} | tail], state, opts) do
     %{
       source_binding: source_binding,
-      source_schema: source_schema,
-      bindings: bindings
+      source_schema: source_schema
     } = state
 
     {join?, join_type, join_filters} =
@@ -187,8 +181,6 @@ defmodule QueryBuilder.AssocList do
       assoc_binding: assoc_binding,
       assoc_schema: assoc_schema
     } = assoc_data
-
-    state = %{state | bindings: [assoc_binding | bindings]}
 
     assoc_data =
       %{

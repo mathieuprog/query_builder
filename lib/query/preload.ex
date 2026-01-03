@@ -56,9 +56,7 @@ defmodule QueryBuilder.Query.Preload do
       |> Enum.reject(&Enum.empty?(&1))
       |> Enum.map(&convert_list_to_nested_keyword_list(&1))
       |> Enum.reduce(ecto_query, fn list, ecto_query ->
-        atom_or_tuple = hd(list)
-        preload = List.wrap(atom_or_tuple)
-        Ecto.Query.preload(ecto_query, ^preload)
+        Ecto.Query.preload(ecto_query, ^list)
       end)
 
     ecto_query
@@ -104,7 +102,6 @@ defmodule QueryBuilder.Query.Preload do
   defp flatten_assoc_data(assoc_list) do
     assoc_list
     |> Enum.flat_map(&do_flatten_assoc_data/1)
-    |> Enum.filter(&(!is_nil(&1)))
   end
 
   defp do_flatten_assoc_data(%{nested_assocs: [], preload: preload} = assoc_data) do

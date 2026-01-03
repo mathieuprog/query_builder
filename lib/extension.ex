@@ -129,7 +129,8 @@ defmodule QueryBuilder.Extension do
 
         if function_exported?(QueryBuilder, operation, arity) and
              operation not in QueryBuilder.from_opts_supported_operations() do
-          supported = Enum.map_join(QueryBuilder.from_opts_supported_operations(), ", ", &inspect/1)
+          supported =
+            Enum.map_join(QueryBuilder.from_opts_supported_operations(), ", ", &inspect/1)
 
           raise ArgumentError,
                 "operation #{inspect(operation)}/#{arity} is not supported in from_opts/2; " <>

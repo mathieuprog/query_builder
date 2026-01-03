@@ -1018,7 +1018,7 @@ defmodule QueryBuilderTest do
     users =
       User
       |> QueryBuilder.where([authored_articles: :comments], title@comments: "It's great!")
-      |> QueryBuilder.preload_through_join([authored_articles: :comments])
+      |> QueryBuilder.preload_through_join(authored_articles: :comments)
       |> Repo.all()
 
     alice = users |> Enum.uniq_by(& &1.id) |> Enum.find(&(&1.id == 100))
@@ -1033,7 +1033,9 @@ defmodule QueryBuilderTest do
     article = Repo.get_by!(Article, title: "ELIXIR V1.9 RELEASED")
     _ = insert(:comment, %{article: article, user: alice, title: "Not great!"})
 
-    not_great_only_article = insert(:article, %{title: "ONLY NOT GREAT", author: alice, publisher: alice})
+    not_great_only_article =
+      insert(:article, %{title: "ONLY NOT GREAT", author: alice, publisher: alice})
+
     _ = insert(:comment, %{article: not_great_only_article, user: alice, title: "Not great!"})
 
     users =
@@ -1063,7 +1065,7 @@ defmodule QueryBuilderTest do
     assert_raise ArgumentError, ~r/Article.*comments/, fn ->
       User
       |> QueryBuilder.where(:authored_articles, title@authored_articles: "ELIXIR V1.9 RELEASED")
-      |> QueryBuilder.preload_through_join([authored_articles: :comments])
+      |> QueryBuilder.preload_through_join(authored_articles: :comments)
       |> Repo.all()
     end
   end

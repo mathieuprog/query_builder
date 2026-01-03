@@ -178,7 +178,7 @@ defmodule QueryBuilder do
         end
       else
         query
-    end
+      end
 
     {ecto_query, assoc_list} = QueryBuilder.Query.to_query_and_assoc_list(query)
 
@@ -1510,7 +1510,11 @@ defmodule QueryBuilder do
     :where_not_exists_subquery
   ]
 
-  @from_opts_supported_operations_string Enum.map_join(@from_opts_supported_operations, ", ", &inspect/1)
+  @from_opts_supported_operations_string Enum.map_join(
+                                           @from_opts_supported_operations,
+                                           ", ",
+                                           &inspect/1
+                                         )
 
   def from_opts(query, nil), do: query
   def from_opts(query, []), do: query
