@@ -1457,16 +1457,53 @@ defmodule QueryBuilder do
   ```
   QueryBuilder.left_join(query, :articles, title@articles: "Foo", or: [title@articles: "Bar"])
   ```
+
+  Notes:
+  - `left_join/4` only supports leaf associations (no nested assoc paths). For nested
+    paths, use `left_join_leaf/4` or `left_join_path/4`.
   """
   def left_join(query, assoc_fields, filters \\ [], or_filters \\ [])
 
   def left_join(%QueryBuilder.Query{} = query, assoc_fields, filters, or_filters) do
+    if assoc_fields_nested?(assoc_fields) do
+      raise ArgumentError,
+            "left_join/4 does not support nested association paths (it would be ambiguous whether intermediate hops " <>
+              "should be inner-joined or left-joined). " <>
+              "Use `left_join_leaf/4` for “INNER path + LEFT leaf”, or `left_join_path/4` for “LEFT every hop”. " <>
+              "Got: #{inspect(assoc_fields)}"
+    end
+
+    left_join_leaf(query, assoc_fields, filters, or_filters)
+  end
+
+  def left_join(ecto_query, assoc_fields, filters, or_filters) do
+    ecto_query = ensure_query_has_binding(ecto_query)
+    left_join(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields, filters, or_filters)
+  end
+
+  @doc ~S"""
+  Left-joins the *leaf association* and uses inner joins to traverse intermediate
+  associations in a nested path.
+
+  This is the explicit version of the historical nested `left_join/4` behavior.
+
+  Example (INNER authored_articles, LEFT comments):
+  ```elixir
+  User
+  |> QueryBuilder.left_join_leaf([authored_articles: :comments])
+  |> Repo.all()
+  ```
+  """
+  def left_join_leaf(query, assoc_fields, filters \\ [], or_filters \\ [])
+
+  def left_join_leaf(%QueryBuilder.Query{} = query, assoc_fields, filters, or_filters) do
     %{
       query
       | operations: [
           %{
             type: :left_join,
             assocs: assoc_fields,
+            left_join_mode: :leaf,
             join_filters: [List.wrap(filters), List.wrap(or_filters)]
           }
           | query.operations
@@ -1474,9 +1511,41 @@ defmodule QueryBuilder do
     }
   end
 
-  def left_join(ecto_query, assoc_fields, filters, or_filters) do
+  def left_join_leaf(ecto_query, assoc_fields, filters, or_filters) do
     ecto_query = ensure_query_has_binding(ecto_query)
-    left_join(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields, filters, or_filters)
+    left_join_leaf(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields, filters, or_filters)
+  end
+
+  @doc ~S"""
+  Left-joins *every hop* in a nested association path (a full left-joined chain).
+
+  Example (LEFT authored_articles, LEFT comments):
+  ```elixir
+  User
+  |> QueryBuilder.left_join_path([authored_articles: :comments])
+  |> Repo.all()
+  ```
+  """
+  def left_join_path(query, assoc_fields, filters \\ [], or_filters \\ [])
+
+  def left_join_path(%QueryBuilder.Query{} = query, assoc_fields, filters, or_filters) do
+    %{
+      query
+      | operations: [
+          %{
+            type: :left_join,
+            assocs: assoc_fields,
+            left_join_mode: :path,
+            join_filters: [List.wrap(filters), List.wrap(or_filters)]
+          }
+          | query.operations
+        ]
+    }
+  end
+
+  def left_join_path(ecto_query, assoc_fields, filters, or_filters) do
+    ecto_query = ensure_query_has_binding(ecto_query)
+    left_join_path(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields, filters, or_filters)
   end
 
   @doc ~S"""
@@ -1492,6 +1561,8 @@ defmodule QueryBuilder do
   """
   @from_opts_supported_operations [
     :left_join,
+    :left_join_leaf,
+    :left_join_path,
     :limit,
     :maybe_order_by,
     :maybe_where,
@@ -1670,4 +1741,13 @@ defmodule QueryBuilder do
   end
 
   defp validate_select_merge_selection!(_selection), do: :ok
+
+  defp assoc_fields_nested?(assoc_fields) do
+    assoc_fields
+    |> List.wrap()
+    |> Enum.any?(fn
+      {_field, nested_assoc_fields} -> nested_assoc_fields != []
+      _ -> false
+    end)
+  end
 end

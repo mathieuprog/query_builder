@@ -59,6 +59,12 @@ defmodule QueryBuilder.Extension do
       defdelegate left_join(query, assoc_fields, filters \\ [], or_filters \\ []),
         to: QueryBuilder
 
+      defdelegate left_join_leaf(query, assoc_fields, filters \\ [], or_filters \\ []),
+        to: QueryBuilder
+
+      defdelegate left_join_path(query, assoc_fields, filters \\ [], or_filters \\ []),
+        to: QueryBuilder
+
       defdelegate maybe_where(query, bool, filters), to: QueryBuilder
 
       defdelegate maybe_where(query, condition, assoc_fields, filters, or_filters \\ []),

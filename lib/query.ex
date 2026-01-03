@@ -31,7 +31,8 @@ defmodule QueryBuilder.Query do
               [join: :none, preload: true, preload_strategy: preload_strategy]
 
             :left_join ->
-              [join: :left, join_filters: operation.join_filters]
+              left_join_mode = Map.get(operation, :left_join_mode, :leaf)
+              [join: :left, join_filters: operation.join_filters, left_join_mode: left_join_mode]
 
             _ ->
               []

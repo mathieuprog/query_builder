@@ -144,6 +144,8 @@ defmodule QueryBuilder.AssocList do
           {false, :inner, []}
 
         :left ->
+          left_join_mode = Keyword.get(opts, :left_join_mode, :leaf)
+
           if nested_assoc_fields == [] do
             join_filters =
               case Keyword.get(opts, :join_filters, []) do
@@ -153,7 +155,17 @@ defmodule QueryBuilder.AssocList do
 
             {true, :left, List.wrap(join_filters)}
           else
-            {true, :inner, []}
+            case left_join_mode do
+              :path ->
+                {true, :left, []}
+
+              :leaf ->
+                {true, :inner, []}
+
+              other ->
+                raise ArgumentError,
+                      "invalid left_join_mode #{inspect(other)}; expected :leaf or :path"
+            end
           end
 
         join_type when join_type in [:inner, :left] ->
