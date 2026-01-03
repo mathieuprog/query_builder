@@ -199,7 +199,8 @@ defmodule QueryBuilder.JoinMaker do
   defp binding_name_for_index(%Ecto.Query{from: %{as: as}}, 0) when not is_nil(as), do: as
   defp binding_name_for_index(%Ecto.Query{}, 0), do: :root
 
-  defp binding_name_for_index(%Ecto.Query{joins: joins}, index) when is_integer(index) and index > 0 do
+  defp binding_name_for_index(%Ecto.Query{joins: joins}, index)
+       when is_integer(index) and index > 0 do
     case Enum.at(joins, index - 1) do
       %Ecto.Query.JoinExpr{as: as} when not is_nil(as) -> as
       _ -> {:binding_index, index}

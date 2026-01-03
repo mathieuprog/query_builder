@@ -10,6 +10,7 @@ defmodule QueryBuilder.User do
     field(:deleted, :boolean)
 
     belongs_to(:role, QueryBuilder.Role)
+    has_one(:setting, QueryBuilder.UserSetting)
     has_many(:authored_articles, QueryBuilder.Article, foreign_key: :author_id)
     has_many(:published_articles, QueryBuilder.Article, foreign_key: :publisher_id)
     has_many(:acl_grantee, QueryBuilder.Acl, foreign_key: :grantee_id)

@@ -1,7 +1,7 @@
 defmodule QueryBuilderTest do
   use ExUnit.Case
   import QueryBuilder.Factory
-  alias QueryBuilder.{Repo, User, Article}
+  alias QueryBuilder.{Repo, User, Article, Event}
   require Ecto.Query
   import Ecto.Query
 
@@ -2337,6 +2337,107 @@ defmodule QueryBuilderTest do
       assert_raise ArgumentError, ~r/unknown operation/, fn ->
         QueryBuilder.from_opts(User, unknown_operation: [])
       end
+    end
+  end
+
+  describe "real-world regression patterns" do
+    test "preload does not drop roots for nullable belongs_to associations" do
+      user_without_role =
+        insert(:user, %{
+          name: "NoRoleUser",
+          nickname: "NoRoleUser",
+          email: "norole@example.com",
+          role: nil,
+          role_id: nil
+        })
+
+      loaded =
+        User
+        |> QueryBuilder.where(id: user_without_role.id)
+        |> QueryBuilder.preload(:role)
+        |> Repo.one!()
+
+      assert loaded.id == user_without_role.id
+      assert is_nil(loaded.role)
+      assert Ecto.assoc_loaded?(loaded.role)
+    end
+
+    test "preload does not drop roots for nullable has_one associations" do
+      user_without_setting =
+        insert(:user, %{
+          name: "NoSettingUser",
+          nickname: "NoSettingUser",
+          email: "nosetting@example.com"
+        })
+
+      loaded =
+        User
+        |> QueryBuilder.where(id: user_without_setting.id)
+        |> QueryBuilder.preload(:setting)
+        |> Repo.one!()
+
+      assert loaded.id == user_without_setting.id
+      assert is_nil(loaded.setting)
+      assert Ecto.assoc_loaded?(loaded.setting)
+    end
+
+    test "preloading one-of-many nullable FKs does not drop roots (polymorphic-ish header tables)" do
+      author = Repo.get!(User, 100)
+      commenter = Repo.get!(User, 101)
+
+      article = insert(:article, %{author: author, publisher: author})
+      comment = insert(:comment, %{article: article, user: commenter, title: "x"})
+
+      article_event = Repo.insert!(%Event{kind: "article", article_id: article.id})
+      comment_event = Repo.insert!(%Event{kind: "comment", comment_id: comment.id})
+
+      events =
+        Event
+        |> QueryBuilder.order_by(asc: :id)
+        |> QueryBuilder.preload([:article, :comment])
+        |> Repo.all()
+
+      assert Enum.map(events, & &1.id) == [article_event.id, comment_event.id]
+
+      [first, second] = events
+
+      assert first.kind == "article"
+      assert Ecto.assoc_loaded?(first.article)
+      assert first.article.id == article.id
+      assert is_nil(first.comment) and Ecto.assoc_loaded?(first.comment)
+
+      assert second.kind == "comment"
+      assert Ecto.assoc_loaded?(second.comment)
+      assert second.comment.id == comment.id
+      assert is_nil(second.article) and Ecto.assoc_loaded?(second.article)
+    end
+
+    test "cursor pagination returns stable pages under joins (no overlaps, no missing roots)" do
+      query =
+        User
+        |> QueryBuilder.where([authored_articles: :comments], title@comments: "It's great!")
+        |> QueryBuilder.order_by(asc: :nickname)
+
+      %{
+        paginated_entries: page1,
+        pagination: %{cursor_for_entries_after: cursor1}
+      } = QueryBuilder.paginate(query, Repo, page_size: 2, cursor: nil, direction: :after)
+
+      %{
+        paginated_entries: page2,
+        pagination: %{cursor_for_entries_after: cursor2}
+      } = QueryBuilder.paginate(query, Repo, page_size: 2, cursor: cursor1, direction: :after)
+
+      %{paginated_entries: page3} =
+        QueryBuilder.paginate(query, Repo, page_size: 2, cursor: cursor2, direction: :after)
+
+      assert Enum.map(page1, & &1.id) == [100, 101]
+      assert Enum.map(page2, & &1.id) == [103]
+      assert page3 == []
+
+      all_ids = Enum.map(page1 ++ page2, & &1.id)
+      assert all_ids == [100, 101, 103]
+      assert Enum.uniq(all_ids) == all_ids
     end
   end
 
