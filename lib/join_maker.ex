@@ -70,6 +70,69 @@ defmodule QueryBuilder.JoinMaker do
                 "Fix: remove the pre-joined binding, or join it under a different named binding."
       end
 
+      expected_qualifier = join_type
+
+      existing_join =
+        ecto_query.joins
+        |> Enum.find(fn
+          %Ecto.Query.JoinExpr{as: as} when as == assoc_binding -> true
+          _ -> false
+        end)
+
+      cond do
+        is_nil(existing_join) ->
+          raise ArgumentError,
+                "QueryBuilder attempted to reuse an existing named binding #{inspect(assoc_binding)} for " <>
+                  "#{inspect(source_schema)}.#{inspect(assoc_field)}, but could not find a corresponding join " <>
+                  "expression in the query. This is likely a query construction bug; please report it."
+
+        existing_join.qual != expected_qualifier ->
+          raise ArgumentError,
+                "QueryBuilder attempted to join #{inspect(source_schema)}.#{inspect(assoc_field)} " <>
+                  "(assoc schema #{inspect(assoc_schema)}) using named binding #{inspect(assoc_binding)}, " <>
+                  "but the query already has that binding joined as #{inspect(existing_join.qual)} while " <>
+                  "QueryBuilder requires #{inspect(expected_qualifier)}. " <>
+                  "QueryBuilder cannot change the join qualifier of an existing join. " <>
+                  "Fix: remove the pre-joined binding, or join it with the required qualifier under that binding."
+
+        true ->
+          :ok
+      end
+
+      expected_source_index = binding_index!(ecto_query, source_binding)
+      expected_assoc = {expected_source_index, assoc_field}
+
+      case existing_join.assoc do
+        ^expected_assoc ->
+          :ok
+
+        nil ->
+          raise ArgumentError,
+                "QueryBuilder attempted to reuse existing named binding #{inspect(assoc_binding)} for " <>
+                  "#{inspect(source_schema)}.#{inspect(assoc_field)}, but the existing join under that binding " <>
+                  "is not an association join for that association. " <>
+                  "QueryBuilder can only reuse a named binding when it was created by joining the same association " <>
+                  "(e.g. `join: x in assoc(u, #{inspect(assoc_field)}), as: ^#{inspect(assoc_binding)}`). " <>
+                  "Fix: rename the existing binding, or join the correct association under that binding."
+
+        {actual_source_index, actual_assoc_field} ->
+          actual_source_binding = binding_name_for_index(ecto_query, actual_source_index)
+
+          raise ArgumentError,
+                "QueryBuilder attempted to reuse existing named binding #{inspect(assoc_binding)} for " <>
+                  "#{inspect(source_schema)}.#{inspect(assoc_field)}, but the existing join under that binding " <>
+                  "is an association join for #{inspect(actual_source_binding)}.#{inspect(actual_assoc_field)} " <>
+                  "instead. QueryBuilder cannot safely reuse a binding for a different association join. " <>
+                  "Fix: rename the existing binding, or join the correct association under that binding."
+
+        other ->
+          raise ArgumentError,
+                "QueryBuilder attempted to reuse existing named binding #{inspect(assoc_binding)} for " <>
+                  "#{inspect(source_schema)}.#{inspect(assoc_field)}, but the existing join under that binding " <>
+                  "has an unexpected association descriptor: #{inspect(other)}. " <>
+                  "Fix: rename the existing binding, or join the correct association under that binding."
+      end
+
       bindings =
         if Enum.member?(bindings, assoc_binding) do
           bindings
@@ -79,8 +142,6 @@ defmodule QueryBuilder.JoinMaker do
 
       {ecto_query, %{assoc_data | has_joined: true}, bindings}
     else
-      join_type = if join_type == :left, do: :left, else: :inner
-
       on =
         if assoc_data.join_filters != [] do
           assoc_data.join_filters
@@ -108,6 +169,40 @@ defmodule QueryBuilder.JoinMaker do
       else
         {ecto_query, assoc_data, bindings}
       end
+    end
+  end
+
+  defp binding_index!(ecto_query, binding) do
+    cond do
+      ecto_query.from.as == binding ->
+        0
+
+      true ->
+        ecto_query.joins
+        |> Enum.with_index(1)
+        |> Enum.find_value(fn
+          {%Ecto.Query.JoinExpr{as: as}, index} when as == binding -> index
+          _ -> nil
+        end)
+        |> case do
+          nil ->
+            raise ArgumentError,
+                  "QueryBuilder expected the query to have named binding #{inspect(binding)}, " <>
+                    "but it was not found. This is likely a query construction bug; please report it."
+
+          index ->
+            index
+        end
+    end
+  end
+
+  defp binding_name_for_index(%Ecto.Query{from: %{as: as}}, 0) when not is_nil(as), do: as
+  defp binding_name_for_index(%Ecto.Query{}, 0), do: :root
+
+  defp binding_name_for_index(%Ecto.Query{joins: joins}, index) when is_integer(index) and index > 0 do
+    case Enum.at(joins, index - 1) do
+      %Ecto.Query.JoinExpr{as: as} when not is_nil(as) -> as
+      _ -> {:binding_index, index}
     end
   end
 end

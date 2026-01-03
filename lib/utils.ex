@@ -27,49 +27,43 @@ defmodule QueryBuilder.Utils do
   def find_field_and_binding_from_token(query, assoc_list, field) do
     token = to_string(field)
 
-    {field, assoc_field} =
-      case String.split(token, "@", parts: 3) do
-        [field] ->
-          {field, nil}
+    parts = String.split(token, "@")
 
-        [field, assoc_field] ->
-          {field, assoc_field}
+    if Enum.any?(parts, &(&1 == "")) do
+      raise ArgumentError,
+            "invalid token #{inspect(token)}; expected `field` or `field@assoc` or `field@assoc@nested_assoc...`"
+    end
 
-        _ ->
-          raise ArgumentError,
-                "invalid token #{inspect(token)}; expected `field` or `field@assoc` (at most one '@')"
-      end
+    [field_part | assoc_parts] = parts
 
     field =
       try do
-        String.to_existing_atom(field)
+        String.to_existing_atom(field_part)
       rescue
         ArgumentError ->
-          raise ArgumentError, "unknown field #{inspect(field)} in token #{inspect(token)}"
+          raise ArgumentError, "unknown field #{inspect(field_part)} in token #{inspect(token)}"
       end
 
-    assoc_field =
-      if is_nil(assoc_field) do
-        nil
-      else
+    assoc_path =
+      Enum.map(assoc_parts, fn assoc_part ->
         try do
-          String.to_existing_atom(assoc_field)
+          String.to_existing_atom(assoc_part)
         rescue
           ArgumentError ->
             raise ArgumentError,
-                  "unknown association #{inspect(assoc_field)} in token #{inspect(token)}"
+                  "unknown association #{inspect(assoc_part)} in token #{inspect(token)}"
         end
-      end
+      end)
 
-    do_find_field_and_binding_from_token(query, assoc_list, [field, assoc_field])
+    do_find_field_and_binding_from_token(query, assoc_list, field, assoc_path, token)
   end
 
-  defp do_find_field_and_binding_from_token(query, _assoc_list, [field, nil]) do
+  defp do_find_field_and_binding_from_token(query, _assoc_list, field, [], _token) do
     {field, QueryBuilder.Utils.root_schema(query)}
   end
 
-  defp do_find_field_and_binding_from_token(_query, assoc_list, [field, assoc_field]) do
-    case find_binding_from_token(assoc_list, assoc_field) do
+  defp do_find_field_and_binding_from_token(_query, assoc_list, field, [assoc_field], _token) do
+    case find_binding_from_assoc_name(assoc_list, assoc_field) do
       {:ok, binding} ->
         {field, binding}
 
@@ -82,26 +76,71 @@ defmodule QueryBuilder.Utils do
       {:error, {:ambiguous, matches}} ->
         paths =
           matches
-          |> Enum.map(fn %{path: path} -> Enum.map_join(path, ".", &to_string/1) end)
+          |> Enum.map(fn %{path: path} -> Enum.map_join(path, "@", &to_string/1) end)
           |> Enum.uniq()
           |> Enum.sort()
           |> Enum.join(", ")
 
+        example_token =
+          case matches do
+            [%{path: path} | _] ->
+              "#{field}@#{Enum.map_join(path, "@", &to_string/1)}"
+
+            _ ->
+              "#{field}@#{assoc_field}"
+          end
+
         raise ArgumentError,
               "ambiguous association token @#{assoc_field} in #{inspect(field)}@#{assoc_field}; " <>
                 "it matches multiple association paths: #{paths}. " <>
-                "QueryBuilder token resolution is by association name only; rename one of the associations " <>
-                "(e.g. :comment_user vs :like_user) or avoid mixing multiple `:#{assoc_field}` associations in one query"
+                "Use a full-path token like #{example_token} to disambiguate, " <>
+                "or rename one of the associations (e.g. :comment_user vs :like_user)."
     end
   end
 
-  defp find_binding_from_token(assoc_list, field) do
-    matches = find_binding_matches(assoc_list, field, [])
+  defp do_find_field_and_binding_from_token(_query, assoc_list, field, assoc_path, token)
+       when is_list(assoc_path) do
+    case find_binding_from_assoc_path(assoc_list, assoc_path) do
+      {:ok, binding} ->
+        {field, binding}
+
+      {:error, :not_found} ->
+        example_assoc_fields = assoc_path_to_nested_keyword_list(assoc_path)
+
+        raise ArgumentError,
+              "unknown association path token @#{Enum.map_join(assoc_path, "@", &to_string/1)} in #{inspect(token)}; " <>
+                "include it in the assoc_fields argument (e.g. where(query, #{inspect(example_assoc_fields)}, ...)) " <>
+                "or join/preload it before filtering"
+    end
+  end
+
+  defp find_binding_from_assoc_name(assoc_list, assoc_field) do
+    matches = find_binding_matches(assoc_list, assoc_field, [])
 
     case matches do
       [] -> {:error, :not_found}
       [%{binding: binding}] -> {:ok, binding}
       matches -> {:error, {:ambiguous, matches}}
+    end
+  end
+
+  defp find_binding_from_assoc_path(assoc_list, assoc_path) when is_list(assoc_path) do
+    case assoc_path do
+      [] ->
+        {:error, :not_found}
+
+      [assoc_field | rest] ->
+        case Enum.find(assoc_list, &(&1.assoc_field == assoc_field)) do
+          nil ->
+            {:error, :not_found}
+
+          assoc_data ->
+            if rest == [] do
+              {:ok, assoc_data.assoc_binding}
+            else
+              find_binding_from_assoc_path(assoc_data.nested_assocs, rest)
+            end
+        end
     end
   end
 
@@ -121,4 +160,20 @@ defmodule QueryBuilder.Utils do
       find_binding_matches(assoc_data.nested_assocs, field, rev_path_here) ++
       find_binding_matches(tail, field, rev_path)
   end
+
+  defp assoc_path_to_nested_keyword_list(path) when is_list(path) do
+    case path do
+      [] ->
+        []
+
+      [e] ->
+        [e]
+
+      [head | tail] ->
+        [{head, assoc_path_to_nested_keyword_list(tail) |> unwrap_single_assoc()}]
+    end
+  end
+
+  defp unwrap_single_assoc([e]) when is_atom(e), do: e
+  defp unwrap_single_assoc(other), do: other
 end

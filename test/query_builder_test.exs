@@ -729,6 +729,80 @@ defmodule QueryBuilderTest do
     assert users |> Enum.map(& &1.id) |> Enum.sort() == [100, 101]
   end
 
+  describe "full-path tokens (field@assoc@nested_assoc...)" do
+    test "full-path tokens disambiguate repeated assoc names without renaming associations" do
+      commenter = Repo.get!(User, 100)
+      liker = Repo.get!(User, 101)
+
+      article = insert(:article, %{author: commenter, publisher: commenter})
+      _ = insert(:comment, %{article: article, user: commenter, title: "x"})
+      _ = insert(:article_like, %{article: article, user: liker})
+
+      assert_raise ArgumentError, ~r/ambiguous association token @user/i, fn ->
+        Article
+        |> QueryBuilder.where([comments: :user, article_likes: :user], name@user: commenter.name)
+        |> Repo.all()
+      end
+
+      assert Article
+             |> QueryBuilder.where([comments: :user, article_likes: :user],
+               name@comments@user: commenter.name
+             )
+             |> Repo.all()
+             |> Enum.map(& &1.id) == [article.id]
+
+      assert Article
+             |> QueryBuilder.where([comments: :user, article_likes: :user],
+               name@article_likes@user: liker.name
+             )
+             |> Repo.all()
+             |> Enum.map(& &1.id) == [article.id]
+    end
+
+    test "select supports full-path association tokens" do
+      commenter = Repo.get!(User, 100)
+      liker = Repo.get!(User, 101)
+
+      article = insert(:article, %{author: commenter, publisher: commenter})
+      _ = insert(:comment, %{article: article, user: commenter, title: "x"})
+      _ = insert(:article_like, %{article: article, user: liker})
+
+      assert Article
+             |> QueryBuilder.where(id: article.id)
+             |> QueryBuilder.select([comments: :user, article_likes: :user], %{
+               comment_user_name: :name@comments@user,
+               like_user_name: :name@article_likes@user
+             })
+             |> Repo.one() == %{comment_user_name: commenter.name, like_user_name: liker.name}
+    end
+
+    test "paginate supports full-path order_by tokens" do
+      query =
+        Article
+        |> QueryBuilder.order_by([author: :role], asc: :name@author@role)
+
+      %{paginated_entries: entries, pagination: %{cursor_for_entries_after: cursor}} =
+        QueryBuilder.paginate(query, Repo, page_size: 2, cursor: nil, direction: :after)
+
+      assert length(entries) == 2
+      assert is_binary(cursor) and cursor != ""
+    end
+
+    test "preload is not dropped when filtering via a full-path token" do
+      commenter = insert(:user, %{name: "FullPathCommenter"})
+      article = insert(:article, %{author: commenter, publisher: commenter})
+      _ = insert(:comment, %{article: article, user: commenter, title: "x"})
+
+      articles =
+        Article
+        |> QueryBuilder.where([comments: :user], name@comments@user: commenter.name)
+        |> QueryBuilder.preload(:comments)
+        |> Repo.all()
+
+      assert Enum.any?(articles, &Ecto.assoc_loaded?(&1.comments))
+    end
+  end
+
   test "subquery/2 builds an Ecto.SubQuery from QueryBuilder ops" do
     ids_subquery =
       QueryBuilder.subquery(User,
@@ -968,6 +1042,53 @@ defmodule QueryBuilderTest do
            |> QueryBuilder.left_join_path(authored_articles: :comments)
            |> QueryBuilder.where(name: "Eric")
            |> Repo.one()
+  end
+
+  test "pre-joined composition: reuses an existing binding only when QueryBuilder does not need to apply join filters" do
+    query =
+      User._query()
+      |> User._join(:inner, User, :role, [])
+
+    # No join filters required -> safe reuse.
+    assert query
+           |> QueryBuilder.where(:role, name@role: "author")
+           |> Repo.all() != []
+
+    # Join filters required -> fail-fast (can't rewrite the existing join's ON).
+    assert_raise ArgumentError, ~r/cannot safely apply those filters/i, fn ->
+      query
+      |> QueryBuilder.left_join(:role, name@role: "author")
+      |> Repo.all()
+    end
+  end
+
+  test "pre-joined composition raises when a QueryBuilder left join is requested but the existing join qualifier is inner" do
+    query =
+      User._query()
+      |> User._join(:inner, User, :role, [])
+
+    assert_raise ArgumentError, ~r/joined as :inner.*requires :left/i, fn ->
+      query
+      |> QueryBuilder.left_join(:role)
+      |> Repo.all()
+    end
+  end
+
+  test "pre-joined composition raises when an existing named binding is not the expected association join" do
+    role_binding = User._binding(:role)
+
+    query =
+      User._query()
+      |> join(:inner, [{^User, u}], p in QueryBuilder.Permission,
+        as: ^role_binding,
+        on: p.role_id == u.role_id
+      )
+
+    assert_raise ArgumentError, ~r/expected.*association join|assoc\(/i, fn ->
+      query
+      |> QueryBuilder.where(:role, name@role: "author")
+      |> Repo.all()
+    end
   end
 
   test "preload" do
@@ -2049,6 +2170,174 @@ defmodule QueryBuilderTest do
       |> Repo.one!()
 
     assert hd(alice.authored_articles).title == "ELIXIR V1.9 RELEASED"
+  end
+
+  describe "regressions / leftover cleanup" do
+    test "limit/2 ensures the root named binding so chaining where works" do
+      results =
+        User
+        |> QueryBuilder.limit(1)
+        |> QueryBuilder.where(name: "Alice")
+        |> Repo.all()
+
+      assert length(results) == 1
+    end
+
+    test "offset/2 ensures the root named binding so chaining where works" do
+      results =
+        User
+        |> QueryBuilder.offset(0)
+        |> QueryBuilder.where(name: "Alice")
+        |> Repo.all()
+
+      assert length(results) == 1
+    end
+
+    test "where/4 treats `or: []` as a no-op instead of crashing" do
+      results =
+        User
+        |> QueryBuilder.where([], [], or: [])
+        |> Repo.all()
+
+      assert length(results) == 9
+    end
+
+    test "preload does not get dropped when the association has nested assocs used only for filtering" do
+      users =
+        User
+        |> QueryBuilder.where([authored_articles: :comments], title@comments: "It's great!")
+        |> QueryBuilder.preload(:authored_articles)
+        |> Repo.all()
+
+      assert Enum.any?(users, &Ecto.assoc_loaded?(&1.authored_articles))
+    end
+
+    test "preloading multiple associations to the same schema works (no collisions)" do
+      calvin =
+        User
+        |> QueryBuilder.where(name: "Calvin")
+        |> QueryBuilder.left_join(:authored_articles)
+        |> QueryBuilder.left_join(:published_articles)
+        |> QueryBuilder.preload_through_join([:authored_articles, :published_articles])
+        |> Repo.one!()
+
+      assert Ecto.assoc_loaded?(calvin.authored_articles)
+      assert Ecto.assoc_loaded?(calvin.published_articles)
+    end
+
+    test "reuses already-joined bindings instead of raising" do
+      query =
+        User._query()
+        |> User._join(:inner, User, :role, [])
+
+      results =
+        query
+        |> QueryBuilder.where(:role, name@role: "author")
+        |> Repo.all()
+
+      assert results != []
+    end
+
+    test "paginate works when a cursor field value is nil" do
+      query =
+        User
+        |> QueryBuilder.order_by(desc: :email, asc: :id)
+
+      %{
+        paginated_entries: [first],
+        pagination: %{cursor_for_entries_after: cursor}
+      } = QueryBuilder.paginate(query, Repo, page_size: 1)
+
+      assert is_nil(first.email)
+
+      %{paginated_entries: entries2} =
+        QueryBuilder.paginate(query, Repo, page_size: 1, cursor: cursor, direction: :after)
+
+      assert entries2 != []
+    end
+
+    test "paginate supports `*_nulls_*` order directions when paging before" do
+      query = QueryBuilder.order_by(User, asc_nulls_last: :email)
+
+      %{paginated_entries: entries} =
+        QueryBuilder.paginate(query, Repo, page_size: 2, cursor: nil, direction: :before)
+
+      assert length(entries) == 2
+    end
+
+    test "paginate returns page_size unique roots even when to-many joins multiply SQL rows" do
+      query =
+        User
+        |> QueryBuilder.where([authored_articles: :comments], title@comments: "It's great!")
+        |> QueryBuilder.order_by(asc: :id)
+
+      %{paginated_entries: paginated_entries} =
+        QueryBuilder.paginate(query, Repo, page_size: 2, cursor: nil, direction: :after)
+
+      assert length(paginated_entries) == 2
+      assert length(Enum.uniq_by(paginated_entries, & &1.id)) == 2
+    end
+
+    test "unknown token binding errors are returned as ArgumentError with a helpful message" do
+      assert_raise ArgumentError, ~r/@role|:role/, fn ->
+        User
+        |> QueryBuilder.where(name@role: "author")
+        |> Repo.all()
+      end
+    end
+
+    test "invalid association fields raise ArgumentError (not a generic string exception)" do
+      assert_raise ArgumentError, ~r/permissions/, fn ->
+        User
+        |> QueryBuilder.where(:permissions, name@permissions: "read")
+        |> Repo.all()
+      end
+    end
+
+    test "`:in` validates that values are a list or subquery and raises Ecto.QueryError" do
+      assert_raise Ecto.QueryError, fn ->
+        User
+        |> QueryBuilder.where({:name, :in, "Alice"})
+        |> Repo.all()
+      end
+    end
+
+    test "limit validates non-integer values and raises Ecto.QueryError" do
+      assert_raise Ecto.QueryError, fn ->
+        User
+        |> QueryBuilder.limit(1.0)
+        |> Repo.all()
+      end
+    end
+
+    test "preloading joined associations supports chains deeper than 6" do
+      assoc_chain =
+        Enum.reduce(:lists.seq(7, 1, -1), nil, fn i, nested ->
+          %{
+            assoc_binding: String.to_atom("binding_#{i}"),
+            assoc_field: String.to_atom("field_#{i}"),
+            has_joined: true,
+            preload: true,
+            nested_assocs: if(nested, do: [nested], else: [])
+          }
+        end)
+
+      assoc_list = [assoc_chain]
+
+      _ = QueryBuilder.Query.Preload.preload(User._query(), assoc_list)
+
+      assert true
+    end
+
+    test "from_opts/2 accepts nil (no-op)" do
+      assert QueryBuilder.from_opts(User, nil) == User
+    end
+
+    test "from_opts/2 validates operation names (whitelist) with a clear error" do
+      assert_raise ArgumentError, ~r/unknown operation/, fn ->
+        QueryBuilder.from_opts(User, unknown_operation: [])
+      end
+    end
   end
 
   test "from_list raises and points to from_opts" do

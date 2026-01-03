@@ -1674,7 +1674,8 @@ defmodule QueryBuilder do
 
     if String.contains?(token, "@") do
       raise ArgumentError,
-            "select_merge does not support merging a `field@assoc` token without an explicit key; " <>
+            "select_merge does not support merging an association token (`field@assoc` / `field@assoc@nested_assoc...`) " <>
+              "without an explicit key; " <>
               "use a map (e.g. `%{role_name: :name@role}`), got: #{inspect(selection)}"
     end
 
@@ -1699,7 +1700,7 @@ defmodule QueryBuilder do
            end
          end) do
         raise ArgumentError,
-              "select_merge does not support merging a list that contains `field@assoc` tokens; " <>
+              "select_merge does not support merging a list that contains association tokens (`field@assoc` / `field@assoc@nested_assoc...`); " <>
                 "use a map with explicit keys instead (e.g. `%{role_name: :name@role}`), got: #{inspect(selection)}"
       end
 
