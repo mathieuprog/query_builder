@@ -75,6 +75,8 @@ defmodule QueryBuilder.Extension do
       defdelegate order_by(query, value), to: QueryBuilder
       defdelegate order_by(query, assoc_fields, value), to: QueryBuilder
       defdelegate preload(query, assoc_fields), to: QueryBuilder
+      defdelegate preload_separate(query, assoc_fields), to: QueryBuilder
+      defdelegate preload_through_join(query, assoc_fields), to: QueryBuilder
       defdelegate select(query, selection), to: QueryBuilder
       defdelegate select(query, assoc_fields, selection), to: QueryBuilder
       defdelegate select_merge(query, selection), to: QueryBuilder
@@ -111,6 +113,11 @@ defmodule QueryBuilder.Extension do
       def from_opts(query, []), do: query
 
       def from_opts(query, [{operation, arguments} | tail]) do
+        if is_nil(arguments) do
+          raise ArgumentError,
+                "from_opts/2 does not accept nil for #{inspect(operation)}; omit the operation or pass []"
+        end
+
         arguments =
           cond do
             is_tuple(arguments) -> Tuple.to_list(arguments)
@@ -119,6 +126,15 @@ defmodule QueryBuilder.Extension do
           end
 
         arity = 1 + length(arguments)
+
+        if function_exported?(QueryBuilder, operation, arity) and
+             operation not in QueryBuilder.from_opts_supported_operations() do
+          supported = Enum.map_join(QueryBuilder.from_opts_supported_operations(), ", ", &inspect/1)
+
+          raise ArgumentError,
+                "operation #{inspect(operation)}/#{arity} is not supported in from_opts/2; " <>
+                  "supported operations: #{supported}"
+        end
 
         unless function_exported?(__MODULE__, operation, arity) do
           available =

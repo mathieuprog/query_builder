@@ -27,7 +27,8 @@ defmodule QueryBuilder.Query do
         opts =
           case type do
             :preload ->
-              [join: :inner_if_cardinality_is_one, preload: true]
+              preload_strategy = Map.get(operation, :preload_strategy, nil)
+              [join: :none, preload: true, preload_strategy: preload_strategy]
 
             :left_join ->
               [join: :left, join_filters: operation.join_filters]

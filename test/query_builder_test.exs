@@ -979,16 +979,132 @@ defmodule QueryBuilderTest do
     built_query =
       User
       |> QueryBuilder.where(:authored_articles, title@authored_articles: "ELIXIR V1.9 RELEASED")
-      |> QueryBuilder.preload(preload)
+      |> QueryBuilder.preload_through_join(:authored_articles)
+      |> QueryBuilder.preload_separate(preload)
 
     assert %{changed: :equal} = MapDiff.diff(Repo.all(query), Repo.all(built_query))
 
     built_query =
       User
-      |> QueryBuilder.preload(preload)
+      |> QueryBuilder.preload_separate(preload)
+      |> QueryBuilder.preload_through_join(:authored_articles)
       |> QueryBuilder.where(:authored_articles, title@authored_articles: "ELIXIR V1.9 RELEASED")
 
     assert %{changed: :equal} = MapDiff.diff(Repo.all(query), Repo.all(built_query))
+  end
+
+  test "preload_separate loads all association rows even when the assoc is joined for filtering" do
+    alice = Repo.get!(User, 100)
+    article = Repo.get_by!(Article, title: "ELIXIR V1.9 RELEASED")
+    _ = insert(:comment, %{article: article, user: alice, title: "Not great!"})
+
+    users =
+      User
+      |> QueryBuilder.where([authored_articles: :comments], title@comments: "It's great!")
+      |> QueryBuilder.preload_separate(authored_articles: :comments)
+      |> Repo.all()
+
+    alice = users |> Enum.uniq_by(& &1.id) |> Enum.find(&(&1.id == 100))
+    article = Enum.find(alice.authored_articles, &(&1.title == "ELIXIR V1.9 RELEASED"))
+
+    assert Enum.any?(article.comments, &(&1.title == "Not great!"))
+  end
+
+  test "preload_through_join loads only joined/filtered association rows" do
+    alice = Repo.get!(User, 100)
+    article = Repo.get_by!(Article, title: "ELIXIR V1.9 RELEASED")
+    _ = insert(:comment, %{article: article, user: alice, title: "Not great!"})
+
+    users =
+      User
+      |> QueryBuilder.where([authored_articles: :comments], title@comments: "It's great!")
+      |> QueryBuilder.preload_through_join([authored_articles: :comments])
+      |> Repo.all()
+
+    alice = users |> Enum.uniq_by(& &1.id) |> Enum.find(&(&1.id == 100))
+    article = Enum.find(alice.authored_articles, &(&1.title == "ELIXIR V1.9 RELEASED"))
+
+    refute Enum.any?(article.comments, &(&1.title == "Not great!"))
+  end
+
+  test "preload supports mixed chains (join-preload a prefix, query-preload the rest)" do
+    alice = Repo.get!(User, 100)
+
+    article = Repo.get_by!(Article, title: "ELIXIR V1.9 RELEASED")
+    _ = insert(:comment, %{article: article, user: alice, title: "Not great!"})
+
+    not_great_only_article = insert(:article, %{title: "ONLY NOT GREAT", author: alice, publisher: alice})
+    _ = insert(:comment, %{article: not_great_only_article, user: alice, title: "Not great!"})
+
+    users =
+      User
+      |> QueryBuilder.where([authored_articles: :comments], title@comments: "It's great!")
+      |> QueryBuilder.preload_separate(authored_articles: :comments)
+      |> QueryBuilder.preload_through_join(:authored_articles)
+      |> Repo.all()
+
+    alice = users |> Enum.uniq_by(& &1.id) |> Enum.find(&(&1.id == 100))
+
+    refute Enum.any?(alice.authored_articles, &(&1.title == "ONLY NOT GREAT"))
+
+    article = Enum.find(alice.authored_articles, &(&1.title == "ELIXIR V1.9 RELEASED"))
+    assert Enum.any?(article.comments, &(&1.title == "Not great!"))
+  end
+
+  test "preload_through_join raises if the association isn't joined" do
+    assert_raise ArgumentError, ~r/not joined/, fn ->
+      User
+      |> QueryBuilder.preload_through_join(:role)
+      |> Repo.all()
+    end
+  end
+
+  test "preload_through_join raises when a nested association in the path is not joined" do
+    assert_raise ArgumentError, ~r/Article.*comments/, fn ->
+      User
+      |> QueryBuilder.where(:authored_articles, title@authored_articles: "ELIXIR V1.9 RELEASED")
+      |> QueryBuilder.preload_through_join([authored_articles: :comments])
+      |> Repo.all()
+    end
+  end
+
+  test "preload_separate does not de-duplicate root rows under has_many joins" do
+    assert_raise Ecto.MultipleResultsError, fn ->
+      User
+      |> QueryBuilder.where(name: "Alice")
+      |> QueryBuilder.order_by(:authored_articles, asc: :title@authored_articles)
+      |> QueryBuilder.preload_separate(:authored_articles)
+      |> Repo.one!()
+    end
+  end
+
+  test "preload does not drop root rows when preloading an optional belongs_to (nullable FK)" do
+    no_role_user =
+      Repo.insert!(%User{
+        name: "NoRole",
+        nickname: "NoRole",
+        email: "norole@example.com",
+        deleted: false
+      })
+
+    assert is_nil(no_role_user.role_id)
+
+    ecto_query =
+      User
+      |> QueryBuilder.preload(:role)
+      |> Ecto.Queryable.to_query()
+
+    assert [] == ecto_query.joins
+
+    users =
+      User
+      |> QueryBuilder.preload(:role)
+      |> Repo.all()
+
+    no_role_user = Enum.find(users, &(&1.name == "NoRole"))
+    assert is_nil(no_role_user.role_id)
+    assert is_nil(no_role_user.role)
+    assert Ecto.assoc_loaded?(no_role_user.role)
   end
 
   test "cursor pagination" do
@@ -1290,6 +1406,81 @@ defmodule QueryBuilderTest do
     assert Enum.sort(user_ids) == [first.id]
   end
 
+  test "unsafe SQL-row pagination avoids preloading the sentinel row when preloads are present" do
+    character_length = fn field, get_binding_fun ->
+      {field, binding} = get_binding_fun.(field)
+      Ecto.Query.dynamic([{^binding, x}], fragment("character_length(?)", field(x, ^field)))
+    end
+
+    query =
+      User
+      |> QueryBuilder.preload(:authored_articles)
+      |> QueryBuilder.order_by(asc: &character_length.(:nickname, &1))
+
+    {%{paginated_entries: [first]}, queries} =
+      with_repo_queries(fn ->
+        QueryBuilder.paginate(query, Repo,
+          page_size: 1,
+          cursor: nil,
+          direction: :after,
+          unsafe_sql_row_pagination?: true
+        )
+      end)
+
+    assert Ecto.assoc_loaded?(first.authored_articles)
+
+    preload_queries =
+      Enum.filter(queries, fn metadata ->
+        query = to_string(metadata[:query] || "")
+        String.contains?(query, ~s(FROM "articles"))
+      end)
+
+    assert [preload_query] = preload_queries
+
+    [user_ids_param] = preload_query[:params]
+
+    user_ids =
+      case user_ids_param do
+        ids when is_list(ids) -> ids
+        id when is_integer(id) -> [id]
+      end
+
+    assert Enum.sort(user_ids) == [first.id]
+  end
+
+  test "unsafe SQL-row pagination preserves offset semantics when preloads are present" do
+    character_length = fn field, get_binding_fun ->
+      {field, binding} = get_binding_fun.(field)
+      Ecto.Query.dynamic([{^binding, x}], fragment("character_length(?)", field(x, ^field)))
+    end
+
+    base_query =
+      User
+      |> QueryBuilder.offset(1)
+      |> QueryBuilder.order_by(asc: &character_length.(:nickname, &1))
+
+    %{paginated_entries: [without_preload]} =
+      QueryBuilder.paginate(base_query, Repo,
+        page_size: 1,
+        cursor: nil,
+        direction: :after,
+        unsafe_sql_row_pagination?: true
+      )
+
+    %{paginated_entries: [with_preload]} =
+      base_query
+      |> QueryBuilder.preload(:authored_articles)
+      |> QueryBuilder.paginate(Repo,
+        page_size: 1,
+        cursor: nil,
+        direction: :after,
+        unsafe_sql_row_pagination?: true
+      )
+
+    assert with_preload.id == without_preload.id
+    assert Ecto.assoc_loaded?(with_preload.authored_articles)
+  end
+
   test "cursor pagination uses the ids-first strategy when to-many joins are present" do
     query =
       User
@@ -1353,6 +1544,51 @@ defmodule QueryBuilderTest do
       )
 
     assert is_list(entries)
+  end
+
+  test "paginate validates page_size and max_page_size (fail-fast)" do
+    query = QueryBuilder.order_by(User, asc: :nickname)
+
+    assert_raise ArgumentError, ~r/page_size/, fn ->
+      QueryBuilder.paginate(query, Repo, page_size: 0)
+    end
+
+    assert_raise ArgumentError, ~r/page_size/, fn ->
+      QueryBuilder.paginate(query, Repo, page_size: -1)
+    end
+
+    assert_raise ArgumentError, ~r/page_size/, fn ->
+      QueryBuilder.paginate(query, Repo, page_size: "2")
+    end
+
+    assert_raise ArgumentError, ~r/max_page_size/, fn ->
+      QueryBuilder.paginate(query, Repo, page_size: 2, max_page_size: 0)
+    end
+
+    assert_raise ArgumentError, ~r/max_page_size/, fn ->
+      QueryBuilder.paginate(query, Repo, page_size: 2, max_page_size: "2")
+    end
+  end
+
+  test "paginate raises on custom select expressions even in unsafe_sql_row_pagination?: true mode" do
+    character_length = fn field, get_binding_fun ->
+      {field, binding} = get_binding_fun.(field)
+      Ecto.Query.dynamic([{^binding, x}], fragment("character_length(?)", field(x, ^field)))
+    end
+
+    query =
+      User
+      |> QueryBuilder.order_by(asc: &character_length.(:nickname, &1))
+      |> QueryBuilder.select(:name)
+
+    assert_raise ArgumentError, ~r/custom select|root schema struct/, fn ->
+      QueryBuilder.paginate(query, Repo,
+        page_size: 2,
+        cursor: nil,
+        direction: :after,
+        unsafe_sql_row_pagination?: true
+      )
+    end
   end
 
   test "cursor pagination with invalid direction" do
@@ -1446,6 +1682,20 @@ defmodule QueryBuilderTest do
       |> Repo.all()
 
     assert 2 == length(two_users_not_bob)
+
+    assert_raise Ecto.QueryError, fn ->
+      User
+      |> QueryBuilder.where({:name, :ne, "Bob"})
+      |> QueryBuilder.limit("2.0")
+      |> Repo.all()
+    end
+
+    assert_raise Ecto.QueryError, fn ->
+      User
+      |> QueryBuilder.where({:name, :ne, "Bob"})
+      |> QueryBuilder.limit("2abc")
+      |> Repo.all()
+    end
   end
 
   test "offset" do
@@ -1479,6 +1729,18 @@ defmodule QueryBuilderTest do
       |> length()
 
     assert all_users_count - 2 == users_minus_two_count
+
+    assert_raise Ecto.QueryError, fn ->
+      User
+      |> QueryBuilder.offset("2.0")
+      |> Repo.all()
+    end
+
+    assert_raise Ecto.QueryError, fn ->
+      User
+      |> QueryBuilder.offset("2abc")
+      |> Repo.all()
+    end
   end
 
   test "from_opts" do
@@ -1531,6 +1793,36 @@ defmodule QueryBuilderTest do
       |> Repo.all()
 
     assert 1 == length(skip_two_only_one_not_bob)
+  end
+
+  test "from_opts rejects non-builder operations like paginate/3 with an actionable error" do
+    assert_raise ArgumentError, ~r/paginate/, fn ->
+      QueryBuilder.from_opts(User, paginate: {Repo, [page_size: 1]})
+    end
+  end
+
+  test "where/2 and order_by/2 fail fast on nil inputs (instead of crashing later)" do
+    assert_raise ArgumentError, ~r/where\/2.*nil|filters.*nil/i, fn ->
+      User
+      |> QueryBuilder.where(nil)
+      |> Repo.all()
+    end
+
+    assert_raise ArgumentError, ~r/order_by\/2.*nil|order_by.*nil/i, fn ->
+      User
+      |> QueryBuilder.order_by(nil)
+      |> Repo.all()
+    end
+  end
+
+  test "from_opts fails fast on nil operation values (instead of producing arity errors or crashes)" do
+    assert_raise ArgumentError, ~r/from_opts\/2.*nil/i, fn ->
+      QueryBuilder.from_opts(User, where: nil)
+    end
+
+    assert_raise ArgumentError, ~r/from_opts\/2.*nil/i, fn ->
+      QueryBuilder.from_opts(User, order_by: nil)
+    end
   end
 
   describe "select/select_merge" do

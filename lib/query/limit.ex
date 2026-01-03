@@ -12,8 +12,10 @@ defmodule QueryBuilder.Query.Limit do
   end
 
   defp apply_limit(query, value) when is_binary(value) do
+    value = String.trim(value)
+
     case Integer.parse(value) do
-      {int_value, _rest} ->
+      {int_value, ""} ->
         apply_limit(query, int_value)
 
       _ ->

@@ -12,11 +12,14 @@ defmodule QueryBuilder.Query.Preload do
     # `Ecto.Query.preload(query, [articles: a, user: u, role: r], [articles: {a, [user: {u, [role: r]}]}])`
     ecto_query =
       flattened_assoc_data
-      # Filter only the associations that have been joined
       |> Enum.map(fn assoc_data_list ->
+        validate_through_join_prefix!(assoc_data_list)
+
         assoc_data_list
-        |> Enum.take_while(&effective_joined?(ecto_query, &1))
-        |> Enum.map(fn assoc_data -> {assoc_data.assoc_binding, assoc_data.assoc_field} end)
+        |> Enum.take_while(&join_preload?(ecto_query, &1))
+        |> Enum.map(fn assoc_data ->
+          {assoc_data.assoc_binding, assoc_data.assoc_field}
+        end)
       end)
       |> Enum.reject(&(&1 == []))
       # Get rid of the associations' lists that are redundant;
@@ -46,7 +49,7 @@ defmodule QueryBuilder.Query.Preload do
       flattened_assoc_data
       |> Enum.map(fn assoc_data_list ->
         Enum.reverse(assoc_data_list)
-        |> Enum.drop_while(&effective_joined?(ecto_query, &1))
+        |> Enum.drop_while(&join_preload?(ecto_query, &1))
         |> Enum.map(& &1.assoc_field)
         |> Enum.reverse()
       end)
@@ -59,6 +62,43 @@ defmodule QueryBuilder.Query.Preload do
       end)
 
     ecto_query
+  end
+
+  defp join_preload?(ecto_query, assoc_data) do
+    case Map.get(assoc_data, :preload_strategy) do
+      :through_join ->
+        ensure_effective_joined!(ecto_query, assoc_data)
+        true
+
+      :separate ->
+        false
+
+      _auto_or_nil ->
+        effective_joined?(ecto_query, assoc_data)
+    end
+  end
+
+  defp preload_through_join?(%{preload_strategy: :through_join}), do: true
+  defp preload_through_join?(_assoc_data), do: false
+
+  defp validate_through_join_prefix!(assoc_data_list) do
+    {_prefix, rest} = Enum.split_while(assoc_data_list, &preload_through_join?/1)
+
+    if Enum.any?(rest, &preload_through_join?/1) do
+      raise ArgumentError,
+            "invalid mixed preload strategies: `preload_through_join` must apply to a prefix " <>
+              "of an association path; got: #{inspect(Enum.map(assoc_data_list, & &1.assoc_field))}"
+    end
+  end
+
+  defp ensure_effective_joined!(ecto_query, assoc_data) do
+    unless effective_joined?(ecto_query, assoc_data) do
+      raise ArgumentError,
+            "preload_through_join requested join-preload for #{inspect(assoc_data.source_schema)}.#{inspect(assoc_data.assoc_field)}, " <>
+              "but that association is not joined. " <>
+              "Join it first (e.g. `QueryBuilder.left_join(query, #{inspect(assoc_data.assoc_field)})` or filter/order_by through it), " <>
+              "or use `preload_separate/2`."
+    end
   end
 
   defp flatten_assoc_data(assoc_list) do

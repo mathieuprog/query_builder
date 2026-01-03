@@ -43,6 +43,18 @@ defmodule QueryBuilder do
     cursor_direction = Keyword.get(opts, :direction, :after)
     unsafe_sql_row_pagination? = Keyword.get(opts, :unsafe_sql_row_pagination?, false)
 
+    unless is_integer(page_size) and page_size >= 1 do
+      raise ArgumentError,
+            "paginate/3 page_size must be a positive integer, got: #{inspect(page_size)}"
+    end
+
+    max_page_size = Keyword.get(opts, :max_page_size)
+
+    if not is_nil(max_page_size) and not (is_integer(max_page_size) and max_page_size >= 1) do
+      raise ArgumentError,
+            "paginate/3 max_page_size must be a positive integer, got: #{inspect(max_page_size)}"
+    end
+
     unless cursor_direction in [:after, :before] do
       raise ArgumentError, "cursor direction #{inspect(cursor_direction)} is invalid"
     end
@@ -57,10 +69,10 @@ defmodule QueryBuilder do
     end
 
     page_size =
-      if max_page_size = Keyword.get(opts, :max_page_size) do
-        min(max_page_size, page_size)
-      else
+      if is_nil(max_page_size) do
         page_size
+      else
+        min(max_page_size, page_size)
       end
 
     cursor = decode_cursor!(Keyword.get(opts, :cursor))
@@ -70,7 +82,13 @@ defmodule QueryBuilder do
     already_sorting_on_id? =
       Enum.any?(query.operations, fn
         %{type: :order_by, args: [keyword_list]} ->
-          Enum.member?(Keyword.values(keyword_list), :id)
+          Enum.any?(keyword_list, fn
+            {_direction, field} when is_atom(field) or is_binary(field) ->
+              to_string(field) == "id"
+
+            _ ->
+              false
+          end)
 
         _ ->
           false
@@ -110,6 +128,13 @@ defmodule QueryBuilder do
       |> Enum.filter(&match?(%{type: :order_by}, &1))
       |> Enum.reverse()
       |> Enum.flat_map(fn %{args: [keyword_list]} -> keyword_list end)
+      |> Enum.map(fn {direction, field} ->
+        if is_atom(field) or is_binary(field) do
+          {direction, to_string(field)}
+        else
+          {direction, field}
+        end
+      end)
       |> Enum.uniq_by(fn {_direction, field} -> field end)
 
     cursor_pagination_supported? =
@@ -153,14 +178,14 @@ defmodule QueryBuilder do
         end
       else
         query
-      end
+    end
 
     {ecto_query, assoc_list} = QueryBuilder.Query.to_query_and_assoc_list(query)
 
+    ensure_paginate_select_is_root!(ecto_query)
+
     {entries, first_row_cursor_map, last_row_cursor_map, has_more?} =
       if cursor_pagination_supported? do
-        ensure_paginate_select_is_root!(ecto_query)
-
         if single_query_cursor_pagination_possible?(ecto_query, assoc_list, order_by_list) do
           entries = repo.all(ecto_query)
 
@@ -238,28 +263,55 @@ defmodule QueryBuilder do
           {entries, first_row, last_row, has_more?}
         end
       else
-        entries = repo.all(ecto_query)
+        if ecto_query.preloads != [] do
+          source_schema = QueryBuilder.Utils.root_schema(ecto_query)
 
-        entries =
-          if cursor_direction == :before do
-            Enum.reverse(entries)
-          else
-            entries
-          end
+          has_more_query =
+            ecto_query
+            |> Query.exclude([:preload, :select])
+            |> Ecto.Query.select([{^source_schema, x}], field(x, :id))
 
-        has_more? = length(entries) == page_size + 1
+          has_more? = length(repo.all(has_more_query)) == page_size + 1
 
-        entries =
-          if has_more? do
-            case cursor_direction do
-              :before -> tl(entries)
-              :after -> List.delete_at(entries, -1)
+          entries_query =
+            ecto_query
+            |> Query.exclude([:limit])
+            |> Ecto.Query.limit(^page_size)
+
+          entries = repo.all(entries_query)
+
+          entries =
+            if cursor_direction == :before do
+              Enum.reverse(entries)
+            else
+              entries
             end
-          else
-            entries
-          end
 
-        {entries, nil, nil, has_more?}
+          {entries, nil, nil, has_more?}
+        else
+          entries = repo.all(ecto_query)
+
+          entries =
+            if cursor_direction == :before do
+              Enum.reverse(entries)
+            else
+              entries
+            end
+
+          has_more? = length(entries) == page_size + 1
+
+          entries =
+            if has_more? do
+              case cursor_direction do
+                :before -> tl(entries)
+                :after -> List.delete_at(entries, -1)
+              end
+            else
+              entries
+            end
+
+          {entries, nil, nil, has_more?}
+        end
       end
 
     build_cursor = fn
@@ -741,9 +793,15 @@ defmodule QueryBuilder do
   @doc ~S"""
   Preloads the associations.
 
-  Bindings are automatically set if joins have been made, or if it is preferable to
-  join (i.e. one-to-one associations are preferable to include into the query result
-  rather than emitting separate DB queries).
+  Preload is hydration-only: it does not introduce joins by itself.
+
+  By default, QueryBuilder will join-preload associations that are already joined
+  (because you filtered/sorted/joined through them), so join filters remain effective.
+  Associations that are not joined are preloaded with separate queries (Ecto's default).
+
+  If you want explicit strategies, use:
+  - `preload_separate/2` to always query-preload
+  - `preload_through_join/2` to require join-preload
 
   Example:
   ```
@@ -760,6 +818,60 @@ defmodule QueryBuilder do
   end
 
   @doc ~S"""
+  Preloads associations using *separate* queries (Ecto's default preload behavior).
+
+  This always performs query-preload, even if the association is joined in SQL.
+
+  Example:
+  ```
+  QueryBuilder.preload_separate(query, [role: :permissions, articles: [:stars, comments: :user]])
+  ```
+  """
+  def preload_separate(%QueryBuilder.Query{} = query, assoc_fields) do
+    %{
+      query
+      | operations: [
+          %{type: :preload, assocs: assoc_fields, preload_strategy: :separate, args: []}
+          | query.operations
+        ]
+    }
+  end
+
+  def preload_separate(ecto_query, assoc_fields) do
+    ecto_query = ensure_query_has_binding(ecto_query)
+    preload_separate(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields)
+  end
+
+  @doc ~S"""
+  Preloads associations *through join bindings* (join-preload).
+
+  This requires the association to already be joined (for example because you filtered
+  through it, ordered by it, or explicitly joined it with `left_join/2`). If the
+  association isn't joined, this raises `ArgumentError`.
+
+  Example:
+  ```
+  User
+  |> QueryBuilder.left_join(:role)
+  |> QueryBuilder.preload_through_join(:role)
+  ```
+  """
+  def preload_through_join(%QueryBuilder.Query{} = query, assoc_fields) do
+    %{
+      query
+      | operations: [
+          %{type: :preload, assocs: assoc_fields, preload_strategy: :through_join, args: []}
+          | query.operations
+        ]
+    }
+  end
+
+  def preload_through_join(ecto_query, assoc_fields) do
+    ecto_query = ensure_query_has_binding(ecto_query)
+    preload_through_join(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields)
+  end
+
+  @doc ~S"""
   An AND where query expression.
 
   Example:
@@ -767,6 +879,11 @@ defmodule QueryBuilder do
   QueryBuilder.where(query, firstname: "John")
   ```
   """
+  def where(_query, nil) do
+    raise ArgumentError,
+          "where/2 expects `filters` to be a keyword list (or a list of filters); got nil"
+  end
+
   def where(query, filters) do
     where(query, [], filters)
   end
@@ -790,6 +907,16 @@ defmodule QueryBuilder do
   ```
   """
   def where(query, assoc_fields, filters, or_filters \\ [])
+
+  def where(_query, _assoc_fields, nil, _or_filters) do
+    raise ArgumentError,
+          "where/4 expects `filters` to be a keyword list (or a list of filters); got nil"
+  end
+
+  def where(_query, _assoc_fields, _filters, nil) do
+    raise ArgumentError,
+          "where/4 expects `or_filters` to be a keyword list like `[or: [...], or: [...]]`; got nil"
+  end
 
   def where(%QueryBuilder.Query{} = query, _assoc_fields, [], []) do
     query
@@ -1227,6 +1354,10 @@ defmodule QueryBuilder do
   QueryBuilder.order_by(query, asc: :lastname, asc: :firstname)
   ```
   """
+  def order_by(_query, nil) do
+    raise ArgumentError, "order_by/2 expects a keyword list; got nil"
+  end
+
   def order_by(query, value) do
     order_by(query, [], value)
   end
@@ -1241,6 +1372,10 @@ defmodule QueryBuilder do
   QueryBuilder.order_by(query, :articles, asc: :title@articles)
   ```
   """
+  def order_by(_query, _assoc_fields, nil) do
+    raise ArgumentError, "order_by/3 expects a keyword list; got nil"
+  end
+
   def order_by(%QueryBuilder.Query{} = query, _assoc_fields, []) do
     query
   end
@@ -1355,10 +1490,37 @@ defmodule QueryBuilder do
   ])
   ```
   """
+  @from_opts_supported_operations [
+    :left_join,
+    :limit,
+    :maybe_order_by,
+    :maybe_where,
+    :offset,
+    :order_by,
+    :preload,
+    :preload_separate,
+    :preload_through_join,
+    :select,
+    :select_merge,
+    :where,
+    :where_any,
+    :where_exists,
+    :where_exists_subquery,
+    :where_not_exists,
+    :where_not_exists_subquery
+  ]
+
+  @from_opts_supported_operations_string Enum.map_join(@from_opts_supported_operations, ", ", &inspect/1)
+
   def from_opts(query, nil), do: query
   def from_opts(query, []), do: query
 
   def from_opts(query, [{operation, arguments} | tail]) do
+    if is_nil(arguments) do
+      raise ArgumentError,
+            "from_opts/2 does not accept nil for #{inspect(operation)}; omit the operation or pass []"
+    end
+
     arguments =
       cond do
         is_tuple(arguments) -> Tuple.to_list(arguments)
@@ -1369,16 +1531,15 @@ defmodule QueryBuilder do
     arity = 1 + length(arguments)
 
     unless function_exported?(__MODULE__, operation, arity) do
-      available =
-        __MODULE__.__info__(:functions)
-        |> Enum.map(&elem(&1, 0))
-        |> Enum.uniq()
-        |> Enum.sort()
-        |> Enum.join(", ")
-
       raise ArgumentError,
             "unknown operation #{inspect(operation)}/#{arity} in from_opts/2; " <>
-              "expected a public function on #{inspect(__MODULE__)}. Available operations: #{available}"
+              "supported operations: #{@from_opts_supported_operations_string}"
+    end
+
+    unless operation in @from_opts_supported_operations do
+      raise ArgumentError,
+            "operation #{inspect(operation)}/#{arity} is not supported in from_opts/2; " <>
+              "supported operations: #{@from_opts_supported_operations_string}"
     end
 
     apply(__MODULE__, operation, [query | arguments]) |> from_opts(tail)
@@ -1388,6 +1549,9 @@ defmodule QueryBuilder do
     raise ArgumentError,
           "from_list/2 was renamed to from_opts/2; please update your call sites"
   end
+
+  @doc false
+  def from_opts_supported_operations(), do: @from_opts_supported_operations
 
   defp normalize_or_groups!(or_groups, opt_key, context) do
     cond do

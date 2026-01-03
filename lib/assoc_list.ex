@@ -43,10 +43,12 @@ defmodule QueryBuilder.AssocList do
     * `:nested_assocs`: the nested associations (list)
     * `:source_binding`: *named binding* of the source schema (atom)
     * `:source_schema`: module name of the source schema (atom)
-    * `join_type`: `:left` or `inner` (atom)
+    * `join?`: whether this association should be joined (boolean)
+    * `join_type`: `:left` or `:inner` (atom; only meaningful when `join?` is true)
     * `join_filters`: only in case of a left join, clauses for the `:on` option (list of
     two keyword lists – and/or clauses)
     * `preload`: is to be preloaded or not (boolean)
+    * `preload_strategy`: `:separate` or `:through_join` (atom; only meaningful when `preload` is true)
 
   This information allows the exposed functions such as `QueryBuilder.where/3` to join
   associations, refer to associations, etc.
@@ -86,19 +88,30 @@ defmodule QueryBuilder.AssocList do
           nested_assocs =
             merge_assoc_data(acc_assoc_data.nested_assocs ++ assoc_data.nested_assocs)
 
+          join? = acc_assoc_data.join? || assoc_data.join?
+
           join_type =
-            cond do
-              acc_assoc_data.join_type == assoc_data.join_type ->
-                assoc_data.join_type
-
-              acc_assoc_data.join_type == :left || assoc_data.join_type == :left ->
-                :left
-
-              true ->
-                :inner
+            if acc_assoc_data.join_type == :left || assoc_data.join_type == :left do
+              :left
+            else
+              :inner
             end
 
           preload = acc_assoc_data.preload || assoc_data.preload
+
+          preload_strategy =
+            cond do
+              acc_assoc_data.preload_strategy == :through_join ||
+                  assoc_data.preload_strategy == :through_join ->
+                :through_join
+
+              acc_assoc_data.preload_strategy == :separate ||
+                  assoc_data.preload_strategy == :separate ->
+                :separate
+
+              true ->
+                nil
+            end
 
           join_filters =
             (acc_assoc_data.join_filters ++ assoc_data.join_filters)
@@ -108,9 +121,11 @@ defmodule QueryBuilder.AssocList do
           new_assoc_data =
             acc_assoc_data
             |> Map.put(:nested_assocs, nested_assocs)
+            |> Map.put(:join?, join?)
             |> Map.put(:join_type, join_type)
             |> Map.put(:join_filters, join_filters)
             |> Map.put(:preload, preload)
+            |> Map.put(:preload_strategy, preload_strategy)
 
           List.replace_at(new_assoc_list, index, new_assoc_data)
 
@@ -129,8 +144,11 @@ defmodule QueryBuilder.AssocList do
       bindings: bindings
     } = state
 
-    {join_type, join_filters} =
+    {join?, join_type, join_filters} =
       case Keyword.get(opts, :join, :inner) do
+        :none ->
+          {false, :inner, []}
+
         :left ->
           if nested_assoc_fields == [] do
             join_filters =
@@ -139,16 +157,17 @@ defmodule QueryBuilder.AssocList do
                 join_filters -> join_filters
               end
 
-            {:left, List.wrap(join_filters)}
+            {true, :left, List.wrap(join_filters)}
           else
-            {:inner, []}
+            {true, :inner, []}
           end
 
-        join_type ->
-          {join_type, []}
+        join_type when join_type in [:inner, :left] ->
+          {true, join_type, []}
       end
 
     preload = Keyword.get(opts, :preload, false)
+    preload_strategy = Keyword.get(opts, :preload_strategy, nil)
     authorizer = Keyword.get(opts, :authorizer, nil)
 
     assoc_data =
@@ -156,8 +175,10 @@ defmodule QueryBuilder.AssocList do
         source_binding,
         source_schema,
         assoc_field,
+        join?,
         join_type,
         preload,
+        preload_strategy,
         join_filters,
         authorizer
       )
@@ -196,8 +217,10 @@ defmodule QueryBuilder.AssocList do
          source_binding,
          source_schema,
          assoc_field,
+         join?,
          join_type,
          preload,
+         preload_strategy,
          join_filters,
          authorizer
        ) do
@@ -205,23 +228,31 @@ defmodule QueryBuilder.AssocList do
     cardinality = source_schema._assoc_cardinality(assoc_field)
     assoc_binding = source_schema._binding(assoc_field)
 
-    {join_type, auth_z_join_filters} =
+    {join?, join_type, auth_z_join_filters} =
       case authorizer &&
              authorizer.reject_unauthorized_assoc(source_schema, {assoc_field, assoc_schema}) do
         %{join: join, on: on, or_on: or_on} ->
-          {cond do
-             join == :left || join_type == :left -> :left
-             true -> :inner
-           end, [List.wrap(on), [or: List.wrap(or_on)]]}
+          join_type =
+            if join == :left || join_type == :left do
+              :left
+            else
+              :inner
+            end
+
+          {true, join_type, [List.wrap(on), [or: List.wrap(or_on)]]}
 
         %{join: join, on: on} ->
-          {cond do
-             join == :left || join_type == :left -> :left
-             true -> :inner
-           end, [List.wrap(on), [or: []]]}
+          join_type =
+            if join == :left || join_type == :left do
+              :left
+            else
+              :inner
+            end
+
+          {true, join_type, [List.wrap(on), [or: []]]}
 
         nil ->
-          {join_type, []}
+          {join?, join_type, []}
       end
 
     join_filters =
@@ -234,9 +265,11 @@ defmodule QueryBuilder.AssocList do
       assoc_schema: assoc_schema,
       cardinality: cardinality,
       has_joined: false,
+      join?: join?,
       join_type: join_type,
       join_filters: join_filters,
       preload: preload,
+      preload_strategy: preload_strategy,
       nested_assocs: [],
       source_binding: source_binding,
       source_schema: source_schema

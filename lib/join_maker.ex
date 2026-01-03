@@ -3,13 +3,10 @@ defmodule QueryBuilder.JoinMaker do
 
   require Ecto.Query
 
-  @doc ~S"""
-  Options may be:
-  * `:mode`: if set to `:if_preferable`, schemas are joined only if it is better
-  performance-wise; this happens only for one case: when the association has a
-  one-to-one cardinality, it is better to join and include the association's result
-  in the result set of the query, rather than emitting a new DB query.
-  * `:type`: see `Ecto.Query.join/5`'s qualifier argument for possible values.
+  @doc """
+  Emits joins described by the assoc tree.
+
+  Associations marked as `join?: false` are not joined.
   """
   def make_joins(ecto_query, assoc_list) do
     do_make_joins(ecto_query, assoc_list, [], [], assoc_list)
@@ -46,7 +43,7 @@ defmodule QueryBuilder.JoinMaker do
 
   defp maybe_join(
          ecto_query,
-         %{cardinality: :many, join_type: :inner_if_cardinality_is_one} = assoc_data,
+         %{join?: false} = assoc_data,
          bindings,
          _original_assoc_list
        ),
@@ -63,42 +60,54 @@ defmodule QueryBuilder.JoinMaker do
     } = assoc_data
 
     if Ecto.Query.has_named_binding?(ecto_query, assoc_binding) do
-      raise ArgumentError,
-            "QueryBuilder attempted to join #{inspect(source_schema)}.#{inspect(assoc_field)} " <>
-              "(assoc schema #{inspect(assoc_schema)}) using named binding #{inspect(assoc_binding)}, " <>
-              "but the query already has a named binding with that name. " <>
-              "This usually means the query was pre-joined with the same binding name; " <>
-              "avoid composing QueryBuilder queries with pre-joined queries, or ensure those joins use different named bindings."
-    end
-
-    join_type = if(join_type == :left, do: :left, else: :inner)
-
-    on =
       if assoc_data.join_filters != [] do
-        assoc_data.join_filters
-        |> Enum.map(fn [filters, or_filters] ->
-          QueryBuilder.Query.Where.build_dynamic_query(
-            ecto_query,
-            original_assoc_list,
-            filters,
-            or_filters
-          )
-        end)
-        |> Enum.reduce(&Ecto.Query.dynamic(^&1 and ^&2))
-      else
-        []
+        raise ArgumentError,
+              "QueryBuilder attempted to join #{inspect(source_schema)}.#{inspect(assoc_field)} " <>
+                "(assoc schema #{inspect(assoc_schema)}) using named binding #{inspect(assoc_binding)}, " <>
+                "but the query already has a named binding with that name. " <>
+                "This association also has join filters (from left_join/4 and/or the authorizer), " <>
+                "and QueryBuilder cannot safely apply those filters to an already-existing join. " <>
+                "Fix: remove the pre-joined binding, or join it under a different named binding."
       end
 
-    unless Enum.member?(bindings, assoc_binding) do
-      ecto_query = source_schema._join(ecto_query, join_type, source_binding, assoc_field, on)
+      bindings =
+        if Enum.member?(bindings, assoc_binding) do
+          bindings
+        else
+          [assoc_binding | bindings]
+        end
 
-      {
-        ecto_query,
-        %{assoc_data | has_joined: true},
-        [assoc_binding | bindings]
-      }
+      {ecto_query, %{assoc_data | has_joined: true}, bindings}
     else
-      {ecto_query, assoc_data, bindings}
+      join_type = if join_type == :left, do: :left, else: :inner
+
+      on =
+        if assoc_data.join_filters != [] do
+          assoc_data.join_filters
+          |> Enum.map(fn [filters, or_filters] ->
+            QueryBuilder.Query.Where.build_dynamic_query(
+              ecto_query,
+              original_assoc_list,
+              filters,
+              or_filters
+            )
+          end)
+          |> Enum.reduce(&Ecto.Query.dynamic(^&1 and ^&2))
+        else
+          []
+        end
+
+      unless Enum.member?(bindings, assoc_binding) do
+        ecto_query = source_schema._join(ecto_query, join_type, source_binding, assoc_field, on)
+
+        {
+          ecto_query,
+          %{assoc_data | has_joined: true},
+          [assoc_binding | bindings]
+        }
+      else
+        {ecto_query, assoc_data, bindings}
+      end
     end
   end
 end
