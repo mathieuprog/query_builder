@@ -14,6 +14,12 @@ defmodule QueryBuilder.Query.OrderBy do
     values
     |> Enum.filter(&(&1 != []))
     |> Enum.map(fn
+      {direction, %QueryBuilder.Aggregate{} = aggregate} when is_atom(direction) ->
+        {direction, QueryBuilder.Aggregate.to_dynamic(ecto_query, assoc_list, aggregate)}
+
+      {direction, %Ecto.Query.DynamicExpr{} = dynamic} when is_atom(direction) ->
+        {direction, dynamic}
+
       {direction, custom_fun} when is_function(custom_fun) ->
         {direction, custom_fun.(&find_field_and_binding_from_token(ecto_query, assoc_list, &1))}
 

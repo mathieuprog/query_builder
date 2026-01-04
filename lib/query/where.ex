@@ -38,6 +38,38 @@ defmodule QueryBuilder.Query.Where do
     [apply_filter(query, assoc_list, filter) | apply_filters(query, assoc_list, tail)]
   end
 
+  defp apply_filter(_query, _assoc_list, %QueryBuilder.Aggregate{} = aggregate) do
+    raise ArgumentError,
+          "invalid where filter: aggregate expression #{inspect(aggregate)} cannot be used in WHERE; " <>
+            "use HAVING (QueryBuilder.having/*) after GROUP BY (QueryBuilder.group_by/*) instead"
+  end
+
+  defp apply_filter(_query, _assoc_list, {%QueryBuilder.Aggregate{} = aggregate, _value}) do
+    raise ArgumentError,
+          "invalid where filter: aggregate expression #{inspect(aggregate)} cannot be used in WHERE; " <>
+            "use HAVING (QueryBuilder.having/*) after GROUP BY (QueryBuilder.group_by/*) instead"
+  end
+
+  defp apply_filter(
+         _query,
+         _assoc_list,
+         {%QueryBuilder.Aggregate{} = aggregate, _operator, _value}
+       ) do
+    raise ArgumentError,
+          "invalid where filter: aggregate expression #{inspect(aggregate)} cannot be used in WHERE; " <>
+            "use HAVING (QueryBuilder.having/*) after GROUP BY (QueryBuilder.group_by/*) instead"
+  end
+
+  defp apply_filter(
+         _query,
+         _assoc_list,
+         {%QueryBuilder.Aggregate{} = aggregate, _operator, _value, _operator_opts}
+       ) do
+    raise ArgumentError,
+          "invalid where filter: aggregate expression #{inspect(aggregate)} cannot be used in WHERE; " <>
+            "use HAVING (QueryBuilder.having/*) after GROUP BY (QueryBuilder.group_by/*) instead"
+  end
+
   defp apply_filter(query, assoc_list, {field, value}) do
     apply_filter(query, assoc_list, {field, :eq, value, []})
   end

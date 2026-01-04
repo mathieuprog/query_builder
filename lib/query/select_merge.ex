@@ -98,6 +98,10 @@ defmodule QueryBuilder.Query.SelectMerge do
 
   defp build_select_merge_value_expr!(_ecto_query, _assoc_list, {:literal, value}), do: value
 
+  defp build_select_merge_value_expr!(ecto_query, assoc_list, %QueryBuilder.Aggregate{} = agg) do
+    QueryBuilder.Aggregate.to_dynamic(ecto_query, assoc_list, agg)
+  end
+
   defp build_select_merge_value_expr!(ecto_query, assoc_list, value)
        when is_atom(value) or is_binary(value) do
     {field, binding} = find_field_and_binding_from_token(ecto_query, assoc_list, value)

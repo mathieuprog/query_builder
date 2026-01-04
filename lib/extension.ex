@@ -78,6 +78,14 @@ defmodule QueryBuilder.Extension do
       defdelegate new(ecto_query), to: QueryBuilder
       defdelegate subquery(queryable, opts \\ []), to: QueryBuilder
       defdelegate paginate(query, repo, opts \\ []), to: QueryBuilder
+      defdelegate distinct(query, value), to: QueryBuilder
+      defdelegate distinct(query, assoc_fields, value), to: QueryBuilder
+      defdelegate group_by(query, expr), to: QueryBuilder
+      defdelegate group_by(query, assoc_fields, expr), to: QueryBuilder
+      defdelegate having(query, filters), to: QueryBuilder
+      defdelegate having(query, assoc_fields, filters, or_filters \\ []), to: QueryBuilder
+      defdelegate having_any(query, or_groups), to: QueryBuilder
+      defdelegate having_any(query, assoc_fields, or_groups), to: QueryBuilder
       defdelegate order_by(query, value), to: QueryBuilder
       defdelegate order_by(query, assoc_fields, value), to: QueryBuilder
       defdelegate preload(query, assoc_fields), to: QueryBuilder
@@ -87,6 +95,14 @@ defmodule QueryBuilder.Extension do
       defdelegate select(query, assoc_fields, selection), to: QueryBuilder
       defdelegate select_merge(query, selection), to: QueryBuilder
       defdelegate select_merge(query, assoc_fields, selection), to: QueryBuilder
+      defdelegate count(), to: QueryBuilder
+      defdelegate count(token), to: QueryBuilder
+      defdelegate count(token, modifier), to: QueryBuilder
+      defdelegate count_distinct(token), to: QueryBuilder
+      defdelegate avg(token), to: QueryBuilder
+      defdelegate sum(token), to: QueryBuilder
+      defdelegate min(token), to: QueryBuilder
+      defdelegate max(token), to: QueryBuilder
       defdelegate where(query, filters), to: QueryBuilder
       defdelegate where(query, assoc_fields, filters, or_filters \\ []), to: QueryBuilder
       defdelegate where_any(query, or_groups), to: QueryBuilder

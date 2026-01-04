@@ -13,6 +13,10 @@ defmodule QueryBuilder.Query.Select do
     selection.(&find_field_and_binding_from_token(ecto_query, assoc_list, &1))
   end
 
+  defp build_select_expr!(ecto_query, assoc_list, %QueryBuilder.Aggregate{} = aggregate) do
+    QueryBuilder.Aggregate.to_dynamic(ecto_query, assoc_list, aggregate)
+  end
+
   defp build_select_expr!(ecto_query, assoc_list, selection)
        when is_atom(selection) or is_binary(selection) do
     {field, binding} = find_field_and_binding_from_token(ecto_query, assoc_list, selection)
@@ -72,6 +76,10 @@ defmodule QueryBuilder.Query.Select do
 
   defp build_select_value_expr!(_ecto_query, _assoc_list, {:literal, value}), do: value
 
+  defp build_select_value_expr!(ecto_query, assoc_list, %QueryBuilder.Aggregate{} = aggregate) do
+    QueryBuilder.Aggregate.to_dynamic(ecto_query, assoc_list, aggregate)
+  end
+
   defp build_select_value_expr!(ecto_query, assoc_list, value) when is_tuple(value) do
     build_tuple_dynamic!(ecto_query, assoc_list, value)
   end
@@ -92,6 +100,9 @@ defmodule QueryBuilder.Query.Select do
         %Ecto.Query.DynamicExpr{} = dynamic ->
           dynamic
 
+        %QueryBuilder.Aggregate{} = aggregate ->
+          QueryBuilder.Aggregate.to_dynamic(ecto_query, assoc_list, aggregate)
+
         {:literal, value} ->
           Ecto.Query.dynamic([], ^value)
 
@@ -106,11 +117,11 @@ defmodule QueryBuilder.Query.Select do
           Ecto.Query.dynamic([], ^element)
       end)
 
-    tuple_expr =
+    tuple_ast =
       element_dynamics
       |> Enum.with_index()
       |> Enum.map(fn {_dynamic, index} -> {:^, [], [index]} end)
-      |> List.to_tuple()
+      |> then(&{:{}, [], &1})
 
     params = Enum.map(element_dynamics, &{&1, :any})
 
@@ -119,7 +130,7 @@ defmodule QueryBuilder.Query.Select do
       file: __ENV__.file,
       line: __ENV__.line,
       fun: fn _query ->
-        {tuple_expr, params, [], %{}}
+        {tuple_ast, params, [], %{}}
       end
     }
   end

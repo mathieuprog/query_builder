@@ -516,6 +516,134 @@ defmodule QueryBuilderTest do
            |> Enum.sort() == ["Alice", "Bob", "Charlie"]
   end
 
+  test "distinct(true) avoids duplicate root rows for to-many association filters" do
+    users =
+      User
+      |> QueryBuilder.where([authored_articles: :comments], title@comments: "It's great!")
+      |> QueryBuilder.distinct(true)
+      |> Repo.all()
+
+    assert users == Enum.uniq_by(users, & &1.id)
+
+    assert users
+           |> Enum.map(& &1.name)
+           |> Enum.sort() == ["Alice", "Bob", "Charlie"]
+  end
+
+  test "distinct/2 preserves Ecto DISTINCT ON ordering semantics" do
+    query =
+      User
+      |> QueryBuilder.distinct(:nickname)
+      |> QueryBuilder.order_by(asc: :email)
+
+    {sql, _params} = Ecto.Adapters.SQL.to_sql(:all, Repo, query)
+
+    assert sql =~ "DISTINCT ON"
+    assert sql =~ "\"nickname\""
+
+    [_before_order_by, order_by_sql] = String.split(sql, "ORDER BY", parts: 2)
+    {nickname_pos, _len} = :binary.match(order_by_sql, "\"nickname\"")
+    {email_pos, _len} = :binary.match(order_by_sql, "\"email\"")
+    assert nickname_pos < email_pos
+  end
+
+  test "group_by/3 supports association tokens" do
+    rows =
+      User
+      |> QueryBuilder.group_by(:role, :name@role)
+      |> QueryBuilder.select({:name@role, QueryBuilder.count(:id)})
+      |> Repo.all()
+      |> Enum.sort()
+
+    assert rows == [{"admin", 2}, {"author", 3}, {"publisher", 1}, {"reader", 3}]
+  end
+
+  test "having/2 filters grouped queries" do
+    rows =
+      User
+      |> QueryBuilder.group_by(:role, :name@role)
+      |> QueryBuilder.having([{QueryBuilder.count(:id), :gt, 2}])
+      |> QueryBuilder.select({:name@role, QueryBuilder.count(:id)})
+      |> Repo.all()
+      |> Enum.sort()
+
+    assert rows == [{"author", 3}, {"reader", 3}]
+  end
+
+  test "having_any/2 filters grouped queries with an OR of AND groups" do
+    rows =
+      User
+      |> QueryBuilder.group_by(:role, :name@role)
+      |> QueryBuilder.having_any([
+        [{QueryBuilder.count(:id), :gt, 2}],
+        [{QueryBuilder.count(:id), :eq, 1}]
+      ])
+      |> QueryBuilder.select({:name@role, QueryBuilder.count(:id)})
+      |> Repo.all()
+      |> Enum.sort()
+
+    assert rows == [{"author", 3}, {"publisher", 1}, {"reader", 3}]
+  end
+
+  test "aggregate helpers support min/max/sum/avg in grouped selects" do
+    rows =
+      User
+      |> QueryBuilder.group_by(:role, :name@role)
+      |> QueryBuilder.select(
+        {:name@role, QueryBuilder.min(:id), QueryBuilder.max(:id), QueryBuilder.sum(:id),
+         QueryBuilder.avg(:id)}
+      )
+      |> Repo.all()
+
+    {_, min_id, max_id, sum_id, avg_id} =
+      Enum.find(rows, fn {role_name, _, _, _, _} -> role_name == "admin" end)
+
+    assert {min_id, max_id} == {200, 201}
+    assert sum_id in [401, Decimal.new("401")]
+    assert Decimal.equal?(avg_id, Decimal.new("200.5"))
+  end
+
+  test "count_distinct/1 generates COUNT(DISTINCT ...)" do
+    role_author = Repo.get_by!(QueryBuilder.Role, name: "author")
+
+    _ =
+      insert(:user, %{
+        id: 104,
+        name: "Alice 2",
+        email: "alice2@example.com",
+        role: role_author,
+        nickname: "Alice"
+      })
+
+    rows =
+      User
+      |> QueryBuilder.group_by(:role, :name@role)
+      |> QueryBuilder.select(
+        {:name@role, QueryBuilder.count(:id), QueryBuilder.count_distinct(:nickname)}
+      )
+      |> Repo.all()
+
+    assert {"author", 4, 3} =
+             Enum.find(rows, fn {role_name, _count, _distinct} -> role_name == "author" end)
+  end
+
+  test "where/2 fails fast when passed aggregate expressions (use having instead)" do
+    assert_raise ArgumentError, ~r/aggregate.*WHERE.*HAVING/i, fn ->
+      User
+      |> QueryBuilder.where([{QueryBuilder.count(:id), :gt, 1}])
+      |> Repo.all()
+    end
+  end
+
+  test "having/2 fails fast on malformed aggregate tuples" do
+    assert_raise ArgumentError, ~r/invalid having filter/i, fn ->
+      User
+      |> QueryBuilder.group_by(:role, :name@role)
+      |> QueryBuilder.having([{QueryBuilder.count(:id), :gt, 2, :oops}])
+      |> Repo.all()
+    end
+  end
+
   test "where_exists_subquery requires an explicit scope option" do
     assert_raise ArgumentError, ~r/requires an explicit `scope:` option/, fn ->
       User

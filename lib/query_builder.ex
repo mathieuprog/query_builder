@@ -1049,6 +1049,40 @@ defmodule QueryBuilder do
   end
 
   @doc ~S"""
+  Aggregate helpers for grouped queries.
+
+  These return aggregate expressions that can be used in `select/*`, `order_by/*`, and `having/*`.
+
+  Examples:
+  ```
+  QueryBuilder.count(:id)
+  QueryBuilder.count(:id, :distinct)
+  QueryBuilder.sum(:amount)
+  ```
+  """
+  def count(), do: %QueryBuilder.Aggregate{op: :count, arg: nil, modifier: nil}
+
+  def count(token) when is_atom(token) or is_binary(token),
+    do: %QueryBuilder.Aggregate{op: :count, arg: token, modifier: nil}
+
+  def count(token, :distinct) when is_atom(token) or is_binary(token),
+    do: %QueryBuilder.Aggregate{op: :count, arg: token, modifier: :distinct}
+
+  def count_distinct(token), do: count(token, :distinct)
+
+  def avg(token) when is_atom(token) or is_binary(token),
+    do: %QueryBuilder.Aggregate{op: :avg, arg: token, modifier: nil}
+
+  def sum(token) when is_atom(token) or is_binary(token),
+    do: %QueryBuilder.Aggregate{op: :sum, arg: token, modifier: nil}
+
+  def min(token) when is_atom(token) or is_binary(token),
+    do: %QueryBuilder.Aggregate{op: :min, arg: token, modifier: nil}
+
+  def max(token) when is_atom(token) or is_binary(token),
+    do: %QueryBuilder.Aggregate{op: :max, arg: token, modifier: nil}
+
+  @doc ~S"""
   A correlated `EXISTS(...)` subquery filter.
 
   This is the explicit alternative to `where/4` when filtering through to-many
@@ -1314,6 +1348,153 @@ defmodule QueryBuilder do
   def maybe_where(query, false, _, _, _), do: query
 
   @doc ~S"""
+  A distinct query expression.
+
+  When passed `true`/`false`, this sets `DISTINCT` for the current select expression.
+
+  You can also pass order_by-like expressions (tokens/directions) to generate
+  `DISTINCT ON (...)` on databases that support it (e.g. Postgres).
+  """
+  def distinct(_query, nil) do
+    raise ArgumentError,
+          "distinct/2 expects a boolean or an order_by-like expression (tokens, lists/keyword lists); got nil"
+  end
+
+  def distinct(query, value) do
+    distinct(query, [], value)
+  end
+
+  def distinct(_query, _assoc_fields, nil) do
+    raise ArgumentError,
+          "distinct/3 expects a boolean or an order_by-like expression (tokens, lists/keyword lists); got nil"
+  end
+
+  def distinct(%QueryBuilder.Query{} = query, _assoc_fields, []) do
+    query
+  end
+
+  def distinct(%QueryBuilder.Query{} = query, assoc_fields, value) do
+    %{
+      query
+      | operations: [%{type: :distinct, assocs: assoc_fields, args: [value]} | query.operations]
+    }
+  end
+
+  def distinct(ecto_query, assoc_fields, value) do
+    ecto_query = ensure_query_has_binding(ecto_query)
+    distinct(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields, value)
+  end
+
+  @doc ~S"""
+  A group by query expression.
+
+  Example:
+  ```
+  QueryBuilder.group_by(query, :category)
+  ```
+  """
+  def group_by(_query, nil) do
+    raise ArgumentError,
+          "group_by/2 expects a token, a list of tokens/expressions, a dynamic, or a 1-arity function; got nil"
+  end
+
+  def group_by(query, expr) do
+    group_by(query, [], expr)
+  end
+
+  def group_by(_query, _assoc_fields, nil) do
+    raise ArgumentError,
+          "group_by/3 expects a token, a list of tokens/expressions, a dynamic, or a 1-arity function; got nil"
+  end
+
+  def group_by(%QueryBuilder.Query{} = query, _assoc_fields, []) do
+    query
+  end
+
+  def group_by(%QueryBuilder.Query{} = query, assoc_fields, expr) do
+    %{
+      query
+      | operations: [%{type: :group_by, assocs: assoc_fields, args: [expr]} | query.operations]
+    }
+  end
+
+  def group_by(ecto_query, assoc_fields, expr) do
+    ecto_query = ensure_query_has_binding(ecto_query)
+    group_by(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields, expr)
+  end
+
+  @doc ~S"""
+  An AND having query expression.
+
+  Like `where`, but applied after grouping.
+  """
+  def having(_query, nil) do
+    raise ArgumentError,
+          "having/2 expects `filters` to be a keyword list (or a list of filters); got nil"
+  end
+
+  def having(query, filters) do
+    having(query, [], filters)
+  end
+
+  def having(query, assoc_fields, filters, or_filters \\ [])
+
+  def having(_query, _assoc_fields, nil, _or_filters) do
+    raise ArgumentError,
+          "having/4 expects `filters` to be a keyword list (or a list of filters); got nil"
+  end
+
+  def having(_query, _assoc_fields, _filters, nil) do
+    raise ArgumentError,
+          "having/4 expects `or_filters` to be a keyword list like `[or: [...], or: [...]]`; got nil"
+  end
+
+  def having(%QueryBuilder.Query{} = query, _assoc_fields, [], []) do
+    query
+  end
+
+  def having(%QueryBuilder.Query{} = query, assoc_fields, filters, or_filters) do
+    %{
+      query
+      | operations: [
+          %{type: :having, assocs: assoc_fields, args: [filters, or_filters]} | query.operations
+        ]
+    }
+  end
+
+  def having(ecto_query, assoc_fields, filters, or_filters) do
+    ecto_query = ensure_query_has_binding(ecto_query)
+    having(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields, filters, or_filters)
+  end
+
+  @doc ~S"""
+  An OR having query expression (an OR of AND groups).
+  """
+  def having_any(query, or_groups) do
+    having_any(query, [], or_groups)
+  end
+
+  def having_any(query, assoc_fields, or_groups)
+
+  def having_any(%QueryBuilder.Query{} = query, assoc_fields, or_groups) do
+    or_groups = normalize_or_groups!(or_groups, :having_any, "having_any/2 and having_any/3")
+
+    case Enum.reject(or_groups, &(&1 == [])) do
+      [] ->
+        query
+
+      [first | rest] ->
+        or_filters = Enum.map(rest, &{:or, &1})
+        having(query, assoc_fields, first, or_filters)
+    end
+  end
+
+  def having_any(ecto_query, assoc_fields, or_groups) do
+    ecto_query = ensure_query_has_binding(ecto_query)
+    having_any(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields, or_groups)
+  end
+
+  @doc ~S"""
   An order by query expression.
 
   Example:
@@ -1527,6 +1708,10 @@ defmodule QueryBuilder do
   ```
   """
   @from_opts_supported_operations [
+    :distinct,
+    :group_by,
+    :having,
+    :having_any,
     :left_join,
     :left_join_leaf,
     :left_join_path,
