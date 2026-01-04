@@ -2022,8 +2022,8 @@ defmodule QueryBuilderTest do
       |> QueryBuilder.from_opts(
         where: [{:email, :equal_to, "alice@example.com"}],
         where: [name: "Alice", nickname: "Alice"],
-        where: {[role: :permissions], name@permissions: "write"},
-        order_by: {:authored_articles, asc: :title@authored_articles},
+        where: QueryBuilder.args([role: :permissions], name@permissions: "write"),
+        order_by: QueryBuilder.args(:authored_articles, asc: :title@authored_articles),
         preload: :authored_articles
       )
       |> Repo.one!()
@@ -2066,6 +2066,46 @@ defmodule QueryBuilderTest do
       |> Repo.all()
 
     assert 1 == length(skip_two_only_one_not_bob)
+  end
+
+  test "from_opts treats where filter tuples as data (does not expand tuples into args)" do
+    ids =
+      User
+      |> QueryBuilder.from_opts(where: {:id, :in, [100, 101]}, order_by: [asc: :id])
+      |> Repo.all()
+      |> Enum.map(& &1.id)
+
+    assert ids == [100, 101]
+  end
+
+  test "from_opts treats select tuples as data (does not expand tuples into args)" do
+    assert User
+           |> QueryBuilder.from_opts(where: [id: 100], select: {:id, :name})
+           |> Repo.one() == {100, "Alice"}
+  end
+
+  test "from_opts raises on tuple values for multi-arg operations (use QueryBuilder.args)" do
+    assert_raise ArgumentError, ~r/QueryBuilder\.args/i, fn ->
+      User
+      |> QueryBuilder.from_opts(order_by: {:authored_articles, asc: :title@authored_articles})
+      |> Repo.all()
+    end
+  end
+
+  test "from_opts raises on where assoc_fields tuple packs (use QueryBuilder.args)" do
+    assert_raise ArgumentError, ~r/where: QueryBuilder\.args|QueryBuilder\.args/i, fn ->
+      User
+      |> QueryBuilder.from_opts(where: {[role: :permissions], name@permissions: "write"})
+      |> Repo.all()
+    end
+  end
+
+  test "from_opts raises on where assoc_fields tuple packs with assoc atom (use QueryBuilder.args)" do
+    assert_raise ArgumentError, ~r/QueryBuilder\.args/i, fn ->
+      User
+      |> QueryBuilder.from_opts(where: {:role, [name@role: "admin"]})
+      |> Repo.all()
+    end
   end
 
   test "from_opts rejects non-builder operations like paginate/3 with an actionable error" do
@@ -2286,13 +2326,19 @@ defmodule QueryBuilderTest do
 
     assert 1 == length(alice)
 
+    assert_raise ArgumentError, ~r/args/i, fn ->
+      User
+      |> CustomQueryBuilder.from_opts(where_initcap: {:name, "alice"})
+      |> Repo.all()
+    end
+
     # Test from_opts
     alice =
       User
       |> CustomQueryBuilder.from_opts(
-        where_initcap: {:name, "alice"},
-        where: {[role: :permissions], name@permissions: "write"},
-        order_by: {:authored_articles, asc: :title@authored_articles},
+        where_initcap: CustomQueryBuilder.args(:name, "alice"),
+        where: CustomQueryBuilder.args([role: :permissions], name@permissions: "write"),
+        order_by: CustomQueryBuilder.args(:authored_articles, asc: :title@authored_articles),
         preload: :authored_articles
       )
       |> Repo.one!()

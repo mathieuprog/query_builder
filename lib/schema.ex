@@ -19,6 +19,8 @@ defmodule QueryBuilder.Schema do
   # in `__before_compile__/1`.
 
   defmacro __using__(opts) do
+    # Migration guard: v1 accepted `assoc_fields:` for manual association binding names. In v2,
+    # association bindings are generated automatically, so we fail fast with an upgrade hint.
     if Keyword.has_key?(opts, :assoc_fields) do
       raise ArgumentError,
             "the `assoc_fields:` option was removed in QueryBuilder v2; " <>

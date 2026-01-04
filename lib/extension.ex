@@ -43,7 +43,7 @@ defmodule QueryBuilder.Extension do
 
     def list_users(opts \\ []) do
       # Query list can include custom query functions as well:
-      # [where_initcap: {:name, "john"}, where: {:active, true}]
+      # [where_initcap: QB.args(:name, "john"), where: [active: true]]
       MyApp.Accounts.User
       |> QB.from_opts(opts)
       |> Repo.all()
@@ -74,6 +74,11 @@ defmodule QueryBuilder.Extension do
 
       defdelegate maybe_order_by(query, condition, assoc_fields, value),
         to: QueryBuilder
+
+      defdelegate args(args), to: QueryBuilder
+      defdelegate args(arg1, arg2), to: QueryBuilder
+      defdelegate args(arg1, arg2, arg3), to: QueryBuilder
+      defdelegate args(arg1, arg2, arg3, arg4), to: QueryBuilder
 
       defdelegate new(ecto_query), to: QueryBuilder
       defdelegate subquery(queryable, opts \\ []), to: QueryBuilder
@@ -140,11 +145,77 @@ defmodule QueryBuilder.Extension do
                 "from_opts/2 does not accept nil for #{inspect(operation)}; omit the operation or pass []"
         end
 
-        arguments =
+        if is_tuple(arguments) do
+          # Migration guard: v1's from_list/from_opts expanded `{assoc_fields, filters, ...}` tuples
+          # into multi-arg calls. v2 treats tuple values as data, so we fail fast and point callers
+          # at the explicit wrapper (`QueryBuilder.args/*` / `#{inspect(__MODULE__)}.args/*`).
+          assoc_pack? =
+            operation == :where and tuple_size(arguments) >= 2 and
+              case elem(arguments, 0) do
+                assoc_fields when is_list(assoc_fields) ->
+                  true
+
+                assoc_fields when is_atom(assoc_fields) ->
+                  second = elem(arguments, 1)
+
+                  cond do
+                    tuple_size(arguments) >= 3 and is_atom(second) ->
+                      false
+
+                    tuple_size(arguments) == 2 and not is_list(second) ->
+                      false
+
+                    true ->
+                      source_schema = QueryBuilder.Utils.root_schema(query)
+                      assoc_fields in source_schema.__schema__(:associations)
+                  end
+
+                _ ->
+                  false
+              end
+
           cond do
-            is_tuple(arguments) -> Tuple.to_list(arguments)
-            is_list(arguments) -> [arguments]
-            true -> List.wrap(arguments)
+            assoc_pack? ->
+              raise ArgumentError,
+                    "from_opts/2 does not treat `where: {assoc_fields, filters, ...}` as a multi-arg call. " <>
+                      "Use `where: QueryBuilder.args(assoc_fields, filters, ...)` instead; got: #{inspect(arguments)}"
+
+            operation in [:where, :select] ->
+              :ok
+
+            operation in QueryBuilder.from_opts_supported_operations() ->
+              raise ArgumentError,
+                    "from_opts/2 does not accept tuple values for #{inspect(operation)}. " <>
+                      "If you intended to call #{inspect(operation)} with multiple arguments, " <>
+                      "wrap them with `QueryBuilder.args/*`. Got: #{inspect(arguments)}"
+
+            function_exported?(__MODULE__, operation, tuple_size(arguments) + 1) and
+                not function_exported?(__MODULE__, operation, 2) ->
+              raise ArgumentError,
+                    "from_opts/2 does not expand tuple values into multiple arguments for #{inspect(operation)}. " <>
+                      "Use `#{inspect(__MODULE__)}.args/*` (or `QueryBuilder.args/*`) to wrap multiple arguments; " <>
+                      "got: #{inspect(arguments)}"
+
+            true ->
+              :ok
+          end
+        end
+
+        arguments =
+          case arguments do
+            %QueryBuilder.Args{args: args} when is_list(args) and length(args) >= 2 ->
+              args
+
+            %QueryBuilder.Args{args: args} when is_list(args) ->
+              raise ArgumentError,
+                    "from_opts/2 expects QueryBuilder.args/* to wrap at least 2 arguments, got: #{inspect(args)}"
+
+            %QueryBuilder.Args{} = args ->
+              raise ArgumentError,
+                    "from_opts/2 expects QueryBuilder.args/* to wrap a list of arguments; got: #{inspect(args)}"
+
+            other ->
+              [other]
           end
 
         arity = 1 + length(arguments)
@@ -175,6 +246,7 @@ defmodule QueryBuilder.Extension do
         apply(__MODULE__, operation, [query | arguments]) |> from_opts(tail)
       end
 
+      # Migration shim: v1 exposed from_list/2. Keep it to raise with a clear upgrade hint.
       def from_list(_query, _opts) do
         raise ArgumentError,
               "from_list/2 was renamed to from_opts/2; please update your call sites"

@@ -1303,24 +1303,28 @@ defmodule QueryBuilder do
     )
   end
 
+  # Migration shim: v1 accepted where_exists_subquery/4; v2 uses where_exists_subquery/3 opts.
   def where_exists_subquery(_query, _assoc_fields, _filters, _opts) do
     raise ArgumentError,
           "where_exists_subquery/4 was replaced by where_exists_subquery/3; " <>
             "use `where_exists_subquery(assoc_fields, where: [...], where_any: [[...], ...], scope: [...])`"
   end
 
+  # Migration shim: v1 accepted where_not_exists_subquery/4; v2 uses where_not_exists_subquery/3 opts.
   def where_not_exists_subquery(_query, _assoc_fields, _filters, _opts) do
     raise ArgumentError,
           "where_not_exists_subquery/4 was replaced by where_not_exists_subquery/3; " <>
             "use `where_not_exists_subquery(assoc_fields, where: [...], where_any: [[...], ...], scope: [...])`"
   end
 
+  # Migration shim: v1 used where_exists/4; v2 renamed it to where_exists_subquery/3.
   def where_exists(_query, _assoc_fields, _filters, _or_filters \\ []) do
     raise ArgumentError,
           "where_exists/4 was renamed to where_exists_subquery/3; " <>
             "use `where_exists_subquery(assoc_fields, where: [...], scope: [...])`"
   end
 
+  # Migration shim: v1 used where_not_exists/4; v2 renamed it to where_not_exists_subquery/3.
   def where_not_exists(_query, _assoc_fields, _filters, _or_filters \\ []) do
     raise ArgumentError,
           "where_not_exists/4 was renamed to where_not_exists_subquery/3; " <>
@@ -1559,6 +1563,45 @@ defmodule QueryBuilder do
   def maybe_order_by(query, false, _, _), do: query
 
   @doc ~S"""
+  Wrap multiple arguments for use with `from_opts/2`.
+
+  `from_opts/2` normally passes each `{operation, value}` as a single argument to
+  the operation (i.e. it calls `operation(query, value)`). Use `args/*` when you
+  need to call an operation with multiple arguments (like `order_by/3`,
+  `select/3`, `where/3`, or custom extension functions).
+
+  Examples:
+  ```elixir
+  QueryBuilder.from_opts(User, order_by: QueryBuilder.args(:role, asc: :name@role))
+  QueryBuilder.from_opts(User, where: QueryBuilder.args(:role, [name@role: "admin"]))
+  ```
+  """
+  def args(arg1, arg2), do: build_args!([arg1, arg2])
+  def args(arg1, arg2, arg3), do: build_args!([arg1, arg2, arg3])
+  def args(arg1, arg2, arg3, arg4), do: build_args!([arg1, arg2, arg3, arg4])
+
+  def args(args) when is_list(args), do: build_args!(args)
+
+  defp build_args!(args) do
+    cond do
+      args == [] ->
+        raise ArgumentError, "args/1 expects at least 2 arguments; got an empty list"
+
+      length(args) < 2 ->
+        raise ArgumentError,
+              "args/1 expects at least 2 arguments; " <>
+                "for a single argument, pass it directly to from_opts/2 instead"
+
+      Enum.any?(args, &is_nil/1) ->
+        raise ArgumentError,
+              "args/* does not accept nil arguments; omit the operation or pass [] instead"
+
+      true ->
+        %QueryBuilder.Args{args: args}
+    end
+  end
+
+  @doc ~S"""
   A limit query expression.
   If multiple limit expressions are provided, the last expression is evaluated
 
@@ -1748,11 +1791,23 @@ defmodule QueryBuilder do
             "from_opts/2 does not accept nil for #{inspect(operation)}; omit the operation or pass []"
     end
 
+    raw_arguments = arguments
+
     arguments =
-      cond do
-        is_tuple(arguments) -> Tuple.to_list(arguments)
-        is_list(arguments) -> [arguments]
-        true -> List.wrap(arguments)
+      case raw_arguments do
+        %QueryBuilder.Args{args: args} when is_list(args) and length(args) >= 2 ->
+          args
+
+        %QueryBuilder.Args{args: args} when is_list(args) ->
+          raise ArgumentError,
+                "from_opts/2 expects QueryBuilder.args/* to wrap at least 2 arguments, got: #{inspect(args)}"
+
+        %QueryBuilder.Args{} = args ->
+          raise ArgumentError,
+                "from_opts/2 expects QueryBuilder.args/* to wrap a list of arguments; got: #{inspect(args)}"
+
+        other ->
+          [other]
       end
 
     arity = 1 + length(arguments)
@@ -1769,9 +1824,31 @@ defmodule QueryBuilder do
               "supported operations: #{@from_opts_supported_operations_string}"
     end
 
+    if is_tuple(raw_arguments) do
+      cond do
+        # Migration guard: v1's from_list/from_opts expanded `{assoc_fields, filters, ...}` tuples
+        # into multi-arg calls. v2 treats tuple values as data, so we fail fast and point callers
+        # at the explicit wrapper (`QueryBuilder.args/*`).
+        operation == :where and from_opts_where_tuple_looks_like_assoc_pack?(query, raw_arguments) ->
+          raise ArgumentError,
+                "from_opts/2 does not treat `where: {assoc_fields, filters, ...}` as a multi-arg call. " <>
+                  "Use `where: QueryBuilder.args(assoc_fields, filters, ...)` instead; got: #{inspect(raw_arguments)}"
+
+        operation in [:where, :select] ->
+          :ok
+
+        true ->
+          raise ArgumentError,
+                "from_opts/2 does not accept tuple values for #{inspect(operation)}. " <>
+                  "If you intended to call #{inspect(operation)} with multiple arguments, " <>
+                  "wrap them with `QueryBuilder.args/*`. Got: #{inspect(raw_arguments)}"
+      end
+    end
+
     apply(__MODULE__, operation, [query | arguments]) |> from_opts(tail)
   end
 
+  # Migration shim: v1 exposed from_list/2. Keep it to raise with a clear upgrade hint.
   def from_list(_query, _opts) do
     raise ArgumentError,
           "from_list/2 was renamed to from_opts/2; please update your call sites"
@@ -1779,6 +1856,34 @@ defmodule QueryBuilder do
 
   @doc false
   def from_opts_supported_operations(), do: @from_opts_supported_operations
+
+  # Migration helper: distinguish where filter tuples (data) from the old v1 "assoc_fields pack"
+  # tuple that used to mean "call where/3 or where/4". This lets `from_opts/2` raise a targeted
+  # error instead of silently changing meaning.
+  defp from_opts_where_tuple_looks_like_assoc_pack?(query, tuple) when is_tuple(tuple) do
+    assoc_fields = elem(tuple, 0)
+    second = elem(tuple, 1)
+
+    cond do
+      is_list(assoc_fields) ->
+        true
+
+      # Likely a filter tuple: {field, operator, value} / {field, operator, value, opts}
+      is_atom(assoc_fields) and tuple_size(tuple) >= 3 and is_atom(second) ->
+        false
+
+      # Likely a filter tuple: {field, value} (scalar value)
+      is_atom(assoc_fields) and tuple_size(tuple) == 2 and not is_list(second) ->
+        false
+
+      is_atom(assoc_fields) ->
+        source_schema = QueryBuilder.Utils.root_schema(query)
+        assoc_fields in source_schema.__schema__(:associations)
+
+      true ->
+        false
+    end
+  end
 
   defp normalize_or_groups!(or_groups, opt_key, context) do
     cond do
