@@ -6,7 +6,7 @@ defmodule QueryBuilder.MixProject do
   def project do
     [
       app: :query_builder,
-      elixir: "~> 1.9",
+      elixir: "~> 1.14",
       deps: deps(),
       aliases: aliases(),
       elixirc_paths: elixirc_paths(Mix.env()),
