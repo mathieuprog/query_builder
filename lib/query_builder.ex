@@ -1109,8 +1109,6 @@ defmodule QueryBuilder do
   def select_merge(query, assoc_fields, selection)
 
   def select_merge(%QueryBuilder.Query{} = query, assoc_fields, selection) do
-    validate_select_merge_selection!(selection)
-
     %{
       query
       | operations: [
@@ -2056,51 +2054,6 @@ defmodule QueryBuilder do
                 collision_hint
     end
   end
-
-  defp validate_select_merge_selection!(selection) when is_function(selection, 1), do: :ok
-  defp validate_select_merge_selection!(%{}), do: :ok
-
-  defp validate_select_merge_selection!(selection)
-       when is_atom(selection) or is_binary(selection) do
-    token = to_string(selection)
-
-    if String.contains?(token, "@") do
-      raise ArgumentError,
-            "select_merge does not support merging an association token (`field@assoc` / `field@assoc@nested_assoc...`) " <>
-              "without an explicit key; " <>
-              "use a map (e.g. `%{role_name: :name@role}`), got: #{inspect(selection)}"
-    end
-
-    :ok
-  end
-
-  defp validate_select_merge_selection!(selection) when is_list(selection) do
-    if Keyword.keyword?(selection) do
-      :ok
-    else
-      if Enum.any?(selection, fn token ->
-           cond do
-             not (is_atom(token) or is_binary(token)) ->
-               raise ArgumentError,
-                     "select_merge list expects root field tokens (atoms/strings), got: #{inspect(token)}"
-
-             String.contains?(to_string(token), "@") ->
-               true
-
-             true ->
-               false
-           end
-         end) do
-        raise ArgumentError,
-              "select_merge does not support merging a list that contains association tokens (`field@assoc` / `field@assoc@nested_assoc...`); " <>
-                "use a map with explicit keys instead (e.g. `%{role_name: :name@role}`), got: #{inspect(selection)}"
-      end
-
-      :ok
-    end
-  end
-
-  defp validate_select_merge_selection!(_selection), do: :ok
 
   defp assoc_fields_nested?(assoc_fields) do
     assoc_fields

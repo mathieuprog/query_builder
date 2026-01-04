@@ -9,26 +9,24 @@ defmodule QueryBuilder.JoinMaker do
   Associations marked as `join?: false` are not joined.
   """
   def make_joins(ecto_query, assoc_list) do
-    do_make_joins(ecto_query, assoc_list, [], [], assoc_list)
+    do_make_joins(ecto_query, assoc_list, [], assoc_list)
     # returns {ecto_query, new_assoc_list}
   end
 
-  defp do_make_joins(ecto_query, [], _, new_assoc_list, _original_assoc_list),
+  defp do_make_joins(ecto_query, [], new_assoc_list, _original_assoc_list),
     do: {ecto_query, new_assoc_list}
 
   defp do_make_joins(
          ecto_query,
          [assoc_data | tail],
-         bindings,
          new_assoc_list,
          original_assoc_list
        ) do
-    {ecto_query, assoc_data, bindings} =
-      maybe_join(ecto_query, assoc_data, bindings, original_assoc_list)
+    {ecto_query, assoc_data} = maybe_join(ecto_query, assoc_data, original_assoc_list)
 
     {ecto_query, nested_assocs} =
       if assoc_data.has_joined do
-        do_make_joins(ecto_query, assoc_data.nested_assocs, bindings, [], original_assoc_list)
+        do_make_joins(ecto_query, assoc_data.nested_assocs, [], original_assoc_list)
       else
         {ecto_query, assoc_data.nested_assocs}
       end
@@ -36,20 +34,15 @@ defmodule QueryBuilder.JoinMaker do
     assoc_data = %{assoc_data | nested_assocs: nested_assocs}
 
     {ecto_query, new_assoc_list} =
-      do_make_joins(ecto_query, tail, bindings, new_assoc_list, original_assoc_list)
+      do_make_joins(ecto_query, tail, new_assoc_list, original_assoc_list)
 
     {ecto_query, [assoc_data | new_assoc_list]}
   end
 
-  defp maybe_join(
-         ecto_query,
-         %{join?: false} = assoc_data,
-         bindings,
-         _original_assoc_list
-       ),
-       do: {ecto_query, assoc_data, bindings}
+  defp maybe_join(ecto_query, %{join?: false} = assoc_data, _original_assoc_list),
+    do: {ecto_query, assoc_data}
 
-  defp maybe_join(ecto_query, assoc_data, bindings, original_assoc_list) do
+  defp maybe_join(ecto_query, assoc_data, original_assoc_list) do
     %{
       source_binding: source_binding,
       source_schema: source_schema,
@@ -133,14 +126,7 @@ defmodule QueryBuilder.JoinMaker do
                   "Fix: rename the existing binding, or join the correct association under that binding."
       end
 
-      bindings =
-        if Enum.member?(bindings, assoc_binding) do
-          bindings
-        else
-          [assoc_binding | bindings]
-        end
-
-      {ecto_query, %{assoc_data | has_joined: true}, bindings}
+      {ecto_query, %{assoc_data | has_joined: true}}
     else
       on =
         if assoc_data.join_filters != [] do
@@ -158,17 +144,8 @@ defmodule QueryBuilder.JoinMaker do
           []
         end
 
-      unless Enum.member?(bindings, assoc_binding) do
-        ecto_query = source_schema._join(ecto_query, join_type, source_binding, assoc_field, on)
-
-        {
-          ecto_query,
-          %{assoc_data | has_joined: true},
-          [assoc_binding | bindings]
-        }
-      else
-        {ecto_query, assoc_data, bindings}
-      end
+      ecto_query = source_schema._join(ecto_query, join_type, source_binding, assoc_field, on)
+      {ecto_query, %{assoc_data | has_joined: true}}
     end
   end
 

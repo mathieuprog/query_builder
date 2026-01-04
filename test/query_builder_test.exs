@@ -2396,7 +2396,9 @@ defmodule QueryBuilderTest do
 
     test "select_merge raises when given a field@assoc token without an explicit key" do
       assert_raise ArgumentError, ~r/explicit key/, fn ->
-        User |> QueryBuilder.select_merge(:name@role)
+        User
+        |> QueryBuilder.select_merge(:name@role)
+        |> Repo.all()
       end
     end
   end

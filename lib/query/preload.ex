@@ -123,8 +123,6 @@ defmodule QueryBuilder.Query.Preload do
   defp do_convert_list_to_nested_keyword_list([head | tail]),
     do: [{head, do_convert_list_to_nested_keyword_list(tail)}]
 
-  defp do_preload_with_bindings(query, []), do: query
-
   defp do_preload_with_bindings(query, bindings) when is_list(bindings) do
     Ecto.Query.preload(query, ^build_join_preload(bindings))
   end
