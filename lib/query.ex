@@ -9,14 +9,7 @@ defmodule QueryBuilder.Query do
   def to_query_and_assoc_list(%__MODULE__{ecto_query: ecto_query} = query) do
     source_schema = QueryBuilder.Utils.root_schema(ecto_query)
 
-    %{ecto_query: ecto_query, operations: operations} =
-      case authorizer() do
-        nil ->
-          query
-
-        authorizer ->
-          authorizer.reject_unauthorized(query, source_schema)
-      end
+    %{ecto_query: ecto_query, operations: operations} = query
 
     operations = Enum.reverse(operations)
     validate_select_operations!(operations)
@@ -41,8 +34,6 @@ defmodule QueryBuilder.Query do
               []
           end
 
-        opts = [{:authorizer, authorizer()} | opts]
-
         QueryBuilder.AssocList.build(source_schema, accumulated_assocs, assocs, opts)
       end)
 
@@ -63,10 +54,6 @@ defmodule QueryBuilder.Query do
       end)
 
     {Ecto.Queryable.to_query(ecto_query), assoc_list}
-  end
-
-  defp authorizer() do
-    Application.get_env(:query_builder, :authorizer)
   end
 
   defp validate_select_operations!(operations) do
@@ -98,14 +85,6 @@ defmodule QueryBuilder.Query do
               "only one select expression is allowed in query; " <>
                 "call `select/*` at most once and use `select_merge/*` to add fields"
     end
-  end
-end
-
-defimpl Inspect, for: QueryBuilder.Query do
-  def inspect(query, opts) do
-    query
-    |> Ecto.Queryable.to_query()
-    |> Inspect.inspect(opts)
   end
 end
 

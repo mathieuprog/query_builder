@@ -58,7 +58,7 @@ defmodule QueryBuilder.JoinMaker do
               "QueryBuilder attempted to join #{inspect(source_schema)}.#{inspect(assoc_field)} " <>
                 "(assoc schema #{inspect(assoc_schema)}) using named binding #{inspect(assoc_binding)}, " <>
                 "but the query already has a named binding with that name. " <>
-                "This association also has join filters (from left_join/4 and/or the authorizer), " <>
+                "This association also has join filters (from left_join*/*), " <>
                 "and QueryBuilder cannot safely apply those filters to an already-existing join. " <>
                 "Fix: remove the pre-joined binding, or join it under a different named binding."
       end

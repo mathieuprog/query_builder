@@ -200,7 +200,6 @@ defmodule QueryBuilder.AssocList do
 
     preload = Keyword.get(opts, :preload, false)
     preload_strategy = Keyword.get(opts, :preload_strategy, nil)
-    authorizer = Keyword.get(opts, :authorizer, nil)
 
     assoc_data =
       assoc_data(
@@ -211,8 +210,7 @@ defmodule QueryBuilder.AssocList do
         join_type,
         preload,
         preload_strategy,
-        join_filters,
-        authorizer
+        join_filters
       )
 
     %{
@@ -318,33 +316,13 @@ defmodule QueryBuilder.AssocList do
          join_type,
          preload,
          preload_strategy,
-         join_filters,
-         authorizer
+         join_filters
        ) do
     assoc_schema = source_schema._assoc_schema(assoc_field)
     cardinality = source_schema._assoc_cardinality(assoc_field)
     assoc_binding = source_schema._binding(assoc_field)
 
-    {join?, join_type, auth_z_join_filters} =
-      case authorizer &&
-             authorizer.reject_unauthorized_assoc(source_schema, {assoc_field, assoc_schema}) do
-        %{join: join, on: on, or_on: or_on} ->
-          join_type = merge_join_types!(join_type, join, source_schema, assoc_field)
-
-          {true, join_type, [List.wrap(on), [or: List.wrap(or_on)]]}
-
-        %{join: join, on: on} ->
-          join_type = merge_join_types!(join_type, join, source_schema, assoc_field)
-
-          {true, join_type, [List.wrap(on), [or: []]]}
-
-        nil ->
-          {join?, join_type, []}
-      end
-
-    join_filters =
-      ([join_filters] ++ [auth_z_join_filters])
-      |> Enum.reject(&(&1 == []))
+    join_filters = if join_filters == [], do: [], else: [join_filters]
 
     %{
       assoc_binding: assoc_binding,

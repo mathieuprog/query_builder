@@ -35,8 +35,7 @@ defmodule QueryBuilder.Query.Exists do
         source_schema,
         [],
         assoc_fields,
-        join: :inner,
-        authorizer: Application.get_env(:query_builder, :authorizer)
+        join: :inner
       )
 
     {ecto_query, assoc_list} = QueryBuilder.JoinMaker.make_joins(ecto_query, assoc_list)
