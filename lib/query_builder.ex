@@ -1861,7 +1861,24 @@ defmodule QueryBuilder do
   def from_opts(query, nil), do: query
   def from_opts(query, []), do: query
 
+  def from_opts(_query, opts) when not is_list(opts) do
+    raise ArgumentError,
+          "from_opts/2 expects opts to be a keyword list like `[where: ...]`, got: #{inspect(opts)}"
+  end
+
+  def from_opts(_query, [invalid | _] = opts)
+      when not is_tuple(invalid) or tuple_size(invalid) != 2 do
+    raise ArgumentError,
+          "from_opts/2 expects opts to be a keyword list (list of `{operation, value}` pairs); " <>
+            "got invalid entry: #{inspect(invalid)} in #{inspect(opts)}"
+  end
+
   def from_opts(query, [{operation, arguments} | tail]) do
+    unless is_atom(operation) do
+      raise ArgumentError,
+            "from_opts/2 expects operation keys to be atoms, got: #{inspect(operation)}"
+    end
+
     if is_nil(arguments) do
       raise ArgumentError,
             "from_opts/2 does not accept nil for #{inspect(operation)}; omit the operation or pass []"
@@ -1902,6 +1919,11 @@ defmodule QueryBuilder do
 
     if is_tuple(raw_arguments) do
       cond do
+        operation == :where and tuple_size(raw_arguments) < 2 ->
+          raise ArgumentError,
+                "from_opts/2 expects `where:` tuple filters to have at least 2 elements " <>
+                  "(e.g. `{field, value}` or `{field, operator, value}`); got: #{inspect(raw_arguments)}"
+
         # Migration guard: v1's from_list/from_opts expanded `{assoc_fields, filters, ...}` tuples
         # into multi-arg calls. v2 treats tuple values as data, so we fail fast and point callers
         # at the explicit wrapper (`QueryBuilder.args/*`).
@@ -1937,27 +1959,31 @@ defmodule QueryBuilder do
   # tuple that used to mean "call where/3 or where/4". This lets `from_opts/2` raise a targeted
   # error instead of silently changing meaning.
   defp from_opts_where_tuple_looks_like_assoc_pack?(query, tuple) when is_tuple(tuple) do
-    assoc_fields = elem(tuple, 0)
-    second = elem(tuple, 1)
+    if tuple_size(tuple) < 2 do
+      false
+    else
+      assoc_fields = elem(tuple, 0)
+      second = elem(tuple, 1)
 
-    cond do
-      is_list(assoc_fields) ->
-        true
+      cond do
+        is_list(assoc_fields) ->
+          true
 
-      # Likely a filter tuple: {field, operator, value} / {field, operator, value, opts}
-      is_atom(assoc_fields) and tuple_size(tuple) >= 3 and is_atom(second) ->
-        false
+        # Likely a filter tuple: {field, operator, value} / {field, operator, value, opts}
+        is_atom(assoc_fields) and tuple_size(tuple) >= 3 and is_atom(second) ->
+          false
 
-      # Likely a filter tuple: {field, value} (scalar value)
-      is_atom(assoc_fields) and tuple_size(tuple) == 2 and not is_list(second) ->
-        false
+        # Likely a filter tuple: {field, value} (scalar value)
+        is_atom(assoc_fields) and tuple_size(tuple) == 2 and not is_list(second) ->
+          false
 
-      is_atom(assoc_fields) ->
-        source_schema = QueryBuilder.Utils.root_schema(query)
-        assoc_fields in source_schema.__schema__(:associations)
+        is_atom(assoc_fields) ->
+          source_schema = QueryBuilder.Utils.root_schema(query)
+          assoc_fields in source_schema.__schema__(:associations)
 
-      true ->
-        false
+        true ->
+          false
+      end
     end
   end
 

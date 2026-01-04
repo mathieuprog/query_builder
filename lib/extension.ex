@@ -139,7 +139,24 @@ defmodule QueryBuilder.Extension do
       def from_opts(query, nil), do: query
       def from_opts(query, []), do: query
 
+      def from_opts(_query, opts) when not is_list(opts) do
+        raise ArgumentError,
+              "from_opts/2 expects opts to be a keyword list like `[where: ...]`, got: #{inspect(opts)}"
+      end
+
+      def from_opts(_query, [invalid | _] = opts)
+          when not is_tuple(invalid) or tuple_size(invalid) != 2 do
+        raise ArgumentError,
+              "from_opts/2 expects opts to be a keyword list (list of `{operation, value}` pairs); " <>
+                "got invalid entry: #{inspect(invalid)} in #{inspect(opts)}"
+      end
+
       def from_opts(query, [{operation, arguments} | tail]) do
+        unless is_atom(operation) do
+          raise ArgumentError,
+                "from_opts/2 expects operation keys to be atoms, got: #{inspect(operation)}"
+        end
+
         if is_nil(arguments) do
           raise ArgumentError,
                 "from_opts/2 does not accept nil for #{inspect(operation)}; omit the operation or pass []"
@@ -149,6 +166,12 @@ defmodule QueryBuilder.Extension do
           # Migration guard: v1's from_list/from_opts expanded `{assoc_fields, filters, ...}` tuples
           # into multi-arg calls. v2 treats tuple values as data, so we fail fast and point callers
           # at the explicit wrapper (`QueryBuilder.args/*` / `#{inspect(__MODULE__)}.args/*`).
+          if operation == :where and tuple_size(arguments) < 2 do
+            raise ArgumentError,
+                  "from_opts/2 expects `where:` tuple filters to have at least 2 elements " <>
+                    "(e.g. `{field, value}` or `{field, operator, value}`); got: #{inspect(arguments)}"
+          end
+
           assoc_pack? =
             operation == :where and tuple_size(arguments) >= 2 and
               case elem(arguments, 0) do

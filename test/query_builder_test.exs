@@ -2136,6 +2136,22 @@ defmodule QueryBuilderTest do
     assert 1 == length(skip_two_only_one_not_bob)
   end
 
+  test "from_opts fails fast on invalid opts shapes (instead of FunctionClauseError)" do
+    assert_raise ArgumentError, ~r/from_opts\/2.*keyword list/i, fn ->
+      QueryBuilder.from_opts(User, %{where: [id: 100]})
+    end
+
+    assert_raise ArgumentError, ~r/from_opts\/2.*keyword list/i, fn ->
+      QueryBuilder.from_opts(User, [:not_a_pair])
+    end
+  end
+
+  test "from_opts fails fast on invalid where tuple shapes (instead of crashing later)" do
+    assert_raise ArgumentError, ~r/from_opts\/2.*where.*tuple/i, fn ->
+      QueryBuilder.from_opts(User, where: {:id})
+    end
+  end
+
   test "from_opts treats where filter tuples as data (does not expand tuples into args)" do
     ids =
       User
@@ -2412,6 +2428,22 @@ defmodule QueryBuilderTest do
       |> Repo.one!()
 
     assert hd(alice.authored_articles).title == "ELIXIR V1.9 RELEASED"
+  end
+
+  test "extension from_opts fails fast on invalid opts shapes (instead of FunctionClauseError)" do
+    assert_raise ArgumentError, ~r/from_opts\/2.*keyword list/i, fn ->
+      CustomQueryBuilder.from_opts(User, %{where: [id: 100]})
+    end
+
+    assert_raise ArgumentError, ~r/from_opts\/2.*keyword list/i, fn ->
+      CustomQueryBuilder.from_opts(User, [:not_a_pair])
+    end
+  end
+
+  test "extension from_opts fails fast on invalid where tuple shapes" do
+    assert_raise ArgumentError, ~r/from_opts\/2.*where.*tuple/i, fn ->
+      CustomQueryBuilder.from_opts(User, where: {:id})
+    end
   end
 
   describe "regressions / leftover cleanup" do
