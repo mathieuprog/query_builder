@@ -8,7 +8,8 @@ defmodule QueryBuilder.AssocList do
     # recursive calls. This struct keeps the recursive function signatures readable.
 
     defstruct source_binding: nil,
-              source_schema: nil
+              source_schema: nil,
+              lock_left?: false
   end
 
   @doc ~S"""
@@ -40,7 +41,9 @@ defmodule QueryBuilder.AssocList do
     * `:source_binding`: *named binding* of the source schema (atom)
     * `:source_schema`: module name of the source schema (atom)
     * `join?`: whether this association should be joined (boolean)
-    * `join_type`: `:left` or `:inner` (atom; only meaningful when `join?` is true)
+    * `join_type`: `:left`, `:inner`, or `:any` (atom; only meaningful when `join?` is true).
+    `:any` means “no guarantee”: if the join already exists, accept `:left` or `:inner`;
+    if QueryBuilder needs to emit the join, it defaults to `:left`.
     * `join_filters`: only in case of a left join, clauses for the `:on` option (list of
     two keyword lists – and/or clauses)
     * `preload`: is to be preloaded or not (boolean)
@@ -86,11 +89,12 @@ defmodule QueryBuilder.AssocList do
           join? = acc_assoc_data.join? || assoc_data.join?
 
           join_type =
-            if acc_assoc_data.join_type == :left || assoc_data.join_type == :left do
-              :left
-            else
-              :inner
-            end
+            merge_join_types!(
+              acc_assoc_data.join_type,
+              assoc_data.join_type,
+              acc_assoc_data.source_schema,
+              acc_assoc_data.assoc_field
+            )
 
           preload = acc_assoc_data.preload || assoc_data.preload
 
@@ -138,10 +142,12 @@ defmodule QueryBuilder.AssocList do
       source_schema: source_schema
     } = state
 
+    {assoc_field, join_type_marker} = normalize_assoc_field_and_join_type!(assoc_field)
+
     {join?, join_type, join_filters} =
-      case Keyword.get(opts, :join, :inner) do
+      case Keyword.get(opts, :join, :any) do
         :none ->
-          {false, :inner, []}
+          {false, :any, []}
 
         :left ->
           left_join_mode = Keyword.get(opts, :left_join_mode, :leaf)
@@ -168,9 +174,29 @@ defmodule QueryBuilder.AssocList do
             end
           end
 
-        join_type when join_type in [:inner, :left] ->
+        join_type when join_type in [:inner, :left, :any] ->
           {true, join_type, []}
+
+        other ->
+          raise ArgumentError,
+                "invalid join option #{inspect(other)}; expected :none, :left, :inner, or :any"
       end
+
+    join_type_marker =
+      if state.lock_left? do
+        if join_type_marker == :inner do
+          raise ArgumentError,
+                "invalid assoc_fields: cannot require an inner join (`!`) under an optional association path (`?`) " <>
+                  "for #{inspect(source_schema)}.#{inspect(assoc_field)}"
+        end
+
+        :left
+      else
+        join_type_marker
+      end
+
+    join_type =
+      merge_join_types!(join_type, join_type_marker, source_schema, assoc_field)
 
     preload = Keyword.get(opts, :preload, false)
     preload_strategy = Keyword.get(opts, :preload_strategy, nil)
@@ -204,7 +230,8 @@ defmodule QueryBuilder.AssocList do
               %{
                 state
                 | source_binding: assoc_binding,
-                  source_schema: assoc_schema
+                  source_schema: assoc_schema,
+                  lock_left?: state.lock_left? || join_type == :left
               },
               opts
             )
@@ -215,6 +242,72 @@ defmodule QueryBuilder.AssocList do
 
   defp do_build(assoc_list, [assoc_field | tail], state, opts) do
     do_build(assoc_list, [{assoc_field, []} | tail], state, opts)
+  end
+
+  defp normalize_assoc_field_and_join_type!(assoc_field) when is_atom(assoc_field) do
+    assoc_field_string = Atom.to_string(assoc_field)
+
+    cond do
+      String.ends_with?(assoc_field_string, "?") ->
+        base = String.trim_trailing(assoc_field_string, "?")
+
+        if base == "" do
+          raise ArgumentError,
+                "invalid assoc field #{inspect(assoc_field)} (cannot be only a marker)"
+        end
+
+        {String.to_existing_atom(base), :left}
+
+      String.ends_with?(assoc_field_string, "!") ->
+        base = String.trim_trailing(assoc_field_string, "!")
+
+        if base == "" do
+          raise ArgumentError,
+                "invalid assoc field #{inspect(assoc_field)} (cannot be only a marker)"
+        end
+
+        {String.to_existing_atom(base), :inner}
+
+      true ->
+        {assoc_field, :any}
+    end
+  end
+
+  defp normalize_assoc_field_and_join_type!(assoc_field) do
+    raise ArgumentError,
+          "invalid assoc field #{inspect(assoc_field)}; expected an association atom (optionally suffixed with ? or !)"
+  end
+
+  defp merge_join_types!(left, right, source_schema, assoc_field) do
+    allowed = [:left, :inner, :any]
+
+    if left not in allowed do
+      raise ArgumentError,
+            "invalid join qualifier #{inspect(left)} for #{inspect(source_schema)}.#{inspect(assoc_field)}; " <>
+              "expected :left, :inner, or :any"
+    end
+
+    if right not in allowed do
+      raise ArgumentError,
+            "invalid join qualifier #{inspect(right)} for #{inspect(source_schema)}.#{inspect(assoc_field)}; " <>
+              "expected :left, :inner, or :any"
+    end
+
+    case {left, right} do
+      {:any, join_type} ->
+        join_type
+
+      {join_type, :any} ->
+        join_type
+
+      {join_type, join_type} ->
+        join_type
+
+      {a, b} ->
+        raise ArgumentError,
+              "conflicting join requirements for #{inspect(source_schema)}.#{inspect(assoc_field)}: " <>
+                "cannot mix #{inspect(a)} and #{inspect(b)}"
+    end
   end
 
   defp assoc_data(
@@ -236,22 +329,12 @@ defmodule QueryBuilder.AssocList do
       case authorizer &&
              authorizer.reject_unauthorized_assoc(source_schema, {assoc_field, assoc_schema}) do
         %{join: join, on: on, or_on: or_on} ->
-          join_type =
-            if join == :left || join_type == :left do
-              :left
-            else
-              :inner
-            end
+          join_type = merge_join_types!(join_type, join, source_schema, assoc_field)
 
           {true, join_type, [List.wrap(on), [or: List.wrap(or_on)]]}
 
         %{join: join, on: on} ->
-          join_type =
-            if join == :left || join_type == :left do
-              :left
-            else
-              :inner
-            end
+          join_type = merge_join_types!(join_type, join, source_schema, assoc_field)
 
           {true, join_type, [List.wrap(on), [or: []]]}
 

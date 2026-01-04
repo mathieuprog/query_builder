@@ -1716,6 +1716,35 @@ defmodule QueryBuilder do
   end
 
   @doc ~S"""
+  An inner join query expression.
+
+  This emits `INNER JOIN`s for the given association path. It is “just join”: it does
+  not apply filters.
+
+  Example:
+  ```
+  QueryBuilder.inner_join(query, [authored_articles: :comments])
+  ```
+  """
+  def inner_join(query, assoc_fields)
+
+  def inner_join(_query, nil) do
+    raise ArgumentError, "inner_join/2 expects assoc_fields, got nil"
+  end
+
+  def inner_join(%QueryBuilder.Query{} = query, assoc_fields) do
+    %{
+      query
+      | operations: [%{type: :inner_join, assocs: assoc_fields, args: []} | query.operations]
+    }
+  end
+
+  def inner_join(ecto_query, assoc_fields) do
+    ecto_query = ensure_query_has_binding(ecto_query)
+    inner_join(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields)
+  end
+
+  @doc ~S"""
   A join query expression.
 
   Example:
@@ -1829,6 +1858,7 @@ defmodule QueryBuilder do
     :group_by,
     :having,
     :having_any,
+    :inner_join,
     :left_join,
     :left_join_leaf,
     :left_join_path,

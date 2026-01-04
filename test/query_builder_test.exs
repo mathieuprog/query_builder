@@ -1172,6 +1172,119 @@ defmodule QueryBuilderTest do
            |> Repo.one()
   end
 
+  test "assoc_fields with no marker defaults to LEFT joins (does not drop optional belongs_to roots)" do
+    no_role_user =
+      Repo.insert!(%User{
+        name: "NoRoleJoined",
+        nickname: "NoRoleJoined",
+        email: "norole-joined@example.com",
+        deleted: false
+      })
+
+    role_binding = User._binding(:role)
+
+    ecto_query =
+      User
+      |> QueryBuilder.order_by(:role, asc: :name@role)
+      |> Ecto.Queryable.to_query()
+
+    assert Enum.any?(ecto_query.joins, fn
+             %Ecto.Query.JoinExpr{as: as, qual: :left} when as == role_binding -> true
+             _ -> false
+           end)
+
+    users =
+      User
+      |> QueryBuilder.order_by(:role, asc: :name@role)
+      |> Repo.all()
+
+    assert Enum.any?(users, &(&1.id == no_role_user.id))
+  end
+
+  test "inner_join/2 emits INNER joins (drops roots when assoc is missing)" do
+    no_role_user =
+      Repo.insert!(%User{
+        name: "NoRoleInnerJoined",
+        nickname: "NoRoleInnerJoined",
+        email: "norole-inner-joined@example.com",
+        deleted: false
+      })
+
+    role_binding = User._binding(:role)
+
+    ecto_query =
+      User
+      |> QueryBuilder.inner_join(:role)
+      |> Ecto.Queryable.to_query()
+
+    assert Enum.any?(ecto_query.joins, fn
+             %Ecto.Query.JoinExpr{as: as, qual: :inner} when as == role_binding -> true
+             _ -> false
+           end)
+
+    users =
+      User
+      |> QueryBuilder.inner_join(:role)
+      |> Repo.all()
+
+    refute Enum.any?(users, &(&1.id == no_role_user.id))
+  end
+
+  test "where_any/3 does not drop roots when OR mixes root and assoc predicates" do
+    users =
+      User
+      |> QueryBuilder.where_any(:authored_articles, [
+        [name: "Eric"],
+        [title@authored_articles: "ELIXIR V1.9 RELEASED"]
+      ])
+      |> Repo.all()
+      |> Enum.map(& &1.name)
+      |> Enum.sort()
+
+    assert users == ["Alice", "Eric"]
+  end
+
+  test "assoc? raises if the assoc is already INNER-joined upstream" do
+    query =
+      User._query()
+      |> User._join(:inner, User, :role, [])
+
+    assert_raise ArgumentError, ~r/joined as :inner.*requires :left/i, fn ->
+      query
+      |> QueryBuilder.order_by(:role?, asc: :name@role)
+      |> Ecto.Queryable.to_query()
+    end
+  end
+
+  test "assoc! raises if the assoc is already LEFT-joined upstream" do
+    query =
+      User._query()
+      |> User._join(:left, User, :role, [])
+
+    assert_raise ArgumentError, ~r/joined as :left.*requires :inner/i, fn ->
+      query
+      |> QueryBuilder.where(:role!, name@role: "admin")
+      |> Ecto.Queryable.to_query()
+    end
+  end
+
+  test "cannot use ! under ? on the same assoc path" do
+    assert_raise ArgumentError, ~r/optional association path/i, fn ->
+      User
+      |> QueryBuilder.where([authored_articles?: :comments!], title@comments: "x")
+      |> Ecto.Queryable.to_query()
+    end
+  end
+
+  test "conflicting join guarantees for the same assoc raise" do
+    assert_raise ArgumentError, ~r/conflicting join requirements/i, fn ->
+      User
+      |> QueryBuilder.where(:role?, name@role: "admin")
+      |> QueryBuilder.order_by(:role!, asc: :name@role)
+      |> Ecto.Queryable.to_query()
+    end
+  end
+
   test "pre-joined composition: reuses an existing binding only when QueryBuilder does not need to apply join filters" do
     query =
       User._query()

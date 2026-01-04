@@ -30,6 +30,9 @@ defmodule QueryBuilder.Query do
               preload_strategy = Map.get(operation, :preload_strategy, nil)
               [join: :none, preload: true, preload_strategy: preload_strategy]
 
+            :inner_join ->
+              [join: :inner]
+
             :left_join ->
               left_join_mode = Map.get(operation, :left_join_mode, :leaf)
               [join: :left, join_filters: operation.join_filters, left_join_mode: left_join_mode]
@@ -49,6 +52,9 @@ defmodule QueryBuilder.Query do
     ecto_query =
       Enum.reduce(operations, ecto_query, fn
         %{type: :left_join}, ecto_query ->
+          ecto_query
+
+        %{type: :inner_join}, ecto_query ->
           ecto_query
 
         %{type: type, args: args}, ecto_query ->

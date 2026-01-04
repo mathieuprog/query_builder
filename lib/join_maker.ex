@@ -79,7 +79,7 @@ defmodule QueryBuilder.JoinMaker do
                   "#{inspect(source_schema)}.#{inspect(assoc_field)}, but could not find a corresponding join " <>
                   "expression in the query. This is likely a query construction bug; please report it."
 
-        existing_join.qual != expected_qualifier ->
+        expected_qualifier != :any and existing_join.qual != expected_qualifier ->
           raise ArgumentError,
                 "QueryBuilder attempted to join #{inspect(source_schema)}.#{inspect(assoc_field)} " <>
                   "(assoc schema #{inspect(assoc_schema)}) using named binding #{inspect(assoc_binding)}, " <>
@@ -87,6 +87,13 @@ defmodule QueryBuilder.JoinMaker do
                   "QueryBuilder requires #{inspect(expected_qualifier)}. " <>
                   "QueryBuilder cannot change the join qualifier of an existing join. " <>
                   "Fix: remove the pre-joined binding, or join it with the required qualifier under that binding."
+
+        expected_qualifier == :any and existing_join.qual not in [:inner, :left] ->
+          raise ArgumentError,
+                "QueryBuilder attempted to reuse existing named binding #{inspect(assoc_binding)} for " <>
+                  "#{inspect(source_schema)}.#{inspect(assoc_field)}, but the existing join under that binding " <>
+                  "has qualifier #{inspect(existing_join.qual)}. QueryBuilder can only reuse :inner or :left " <>
+                  "association joins under named bindings."
 
         true ->
           :ok
@@ -142,6 +149,12 @@ defmodule QueryBuilder.JoinMaker do
           |> Enum.reduce(&Ecto.Query.dynamic(^&1 and ^&2))
         else
           []
+        end
+
+      join_type =
+        case join_type do
+          :any -> :left
+          other -> other
         end
 
       ecto_query = source_schema._join(ecto_query, join_type, source_binding, assoc_field, on)

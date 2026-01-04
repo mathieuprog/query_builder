@@ -59,6 +59,8 @@ defmodule QueryBuilder.Extension do
       defdelegate left_join(query, assoc_fields, filters \\ [], or_filters \\ []),
         to: QueryBuilder
 
+      defdelegate inner_join(query, assoc_fields), to: QueryBuilder
+
       defdelegate left_join_leaf(query, assoc_fields, filters \\ [], or_filters \\ []),
         to: QueryBuilder
 
