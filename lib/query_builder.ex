@@ -60,6 +60,15 @@ defmodule QueryBuilder do
     end
 
     base_ecto_query = Ecto.Queryable.to_query(query.ecto_query)
+    root_schema = QueryBuilder.Utils.root_schema(base_ecto_query)
+    primary_key_fields = root_schema.__schema__(:primary_key)
+
+    if primary_key_fields == [] and not unsafe_sql_row_pagination? do
+      raise ArgumentError,
+            "paginate/3 requires the root schema to have a primary key so it can append a stable tie-breaker " <>
+              "and reload unique root rows; got schema with no primary key: #{inspect(root_schema)}. " <>
+              "If you want SQL-row pagination (no cursor), pass `unsafe_sql_row_pagination?: true`."
+    end
 
     if base_ecto_query.order_bys != [] do
       raise ArgumentError,
@@ -79,26 +88,36 @@ defmodule QueryBuilder do
 
     query = limit(query, page_size + 1)
 
-    already_sorting_on_id? =
-      Enum.any?(query.operations, fn
-        %{type: :order_by, args: [keyword_list]} ->
-          Enum.any?(keyword_list, fn
-            {_direction, field} when is_atom(field) or is_binary(field) ->
-              to_string(field) == "id"
-
-            _ ->
-              false
-          end)
-
-        _ ->
-          false
-      end)
-
     query =
-      if already_sorting_on_id? do
+      if primary_key_fields == [] do
         query
       else
-        order_by(query, asc: :id)
+        existing_order_fields =
+          query.operations
+          |> Enum.flat_map(fn
+            %{type: :order_by, args: [keyword_list]} ->
+              Enum.flat_map(keyword_list, fn
+                {_direction, field} when is_atom(field) or is_binary(field) -> [to_string(field)]
+                _ -> []
+              end)
+
+            _ ->
+              []
+          end)
+          |> MapSet.new()
+
+        missing_pk_fields =
+          Enum.reject(primary_key_fields, fn pk_field ->
+            MapSet.member?(existing_order_fields, Atom.to_string(pk_field))
+          end)
+
+        case missing_pk_fields do
+          [] ->
+            query
+
+          pk_fields ->
+            order_by(query, Enum.map(pk_fields, &{:asc, &1}))
+        end
       end
 
     # Reverse sorting order if direction is :before
@@ -138,9 +157,10 @@ defmodule QueryBuilder do
       |> Enum.uniq_by(fn {_direction, field} -> field end)
 
     cursor_pagination_supported? =
-      Enum.all?(order_by_list, fn {direction, field} ->
-        cursorable_order_by_field?(field) and supported_cursor_order_direction?(direction)
-      end)
+      primary_key_fields != [] and
+        Enum.all?(order_by_list, fn {direction, field} ->
+          cursorable_order_by_field?(field) and supported_cursor_order_direction?(direction)
+        end)
 
     if cursor != %{} and not cursor_pagination_supported? do
       raise ArgumentError,
@@ -198,14 +218,12 @@ defmodule QueryBuilder do
           {entries, cursor_map_from_entry(first_entry, order_by_list),
            cursor_map_from_entry(last_entry, order_by_list), has_more?}
         else
-          source_schema = QueryBuilder.Utils.root_schema(ecto_query)
-
           cursor_select_map = build_cursor_select_map(ecto_query, assoc_list, order_by_list)
 
           page_keys_query =
             ecto_query
             |> Query.exclude([:preload, :select])
-            |> Ecto.Query.select([{^source_schema, x}], ^cursor_select_map)
+            |> Ecto.Query.select([{^root_schema, x}], ^cursor_select_map)
             |> Ecto.Query.distinct(true)
 
           page_key_rows = repo.all(page_keys_query)
@@ -213,9 +231,9 @@ defmodule QueryBuilder do
           {page_key_rows, has_more?} =
             normalize_paginated_rows(page_key_rows, page_size, cursor_direction)
 
-          ids = Enum.map(page_key_rows, &Map.fetch!(&1, "id"))
+          keys = Enum.map(page_key_rows, &primary_key_value_from_row(&1, primary_key_fields))
 
-          if length(ids) != length(Enum.uniq(ids)) do
+          if length(keys) != length(Enum.uniq(keys)) do
             raise ArgumentError,
                   "paginate/3 could not produce a page of unique root rows; " <>
                     "this usually means your order_by depends on a to-many join (e.g. ordering by a has_many field). " <>
@@ -223,7 +241,7 @@ defmodule QueryBuilder do
                     "order_by: #{inspect(order_by_list)}"
           end
 
-          entries = load_entries_for_page(repo, ecto_query, source_schema, ids)
+          entries = load_entries_for_page(repo, ecto_query, root_schema, primary_key_fields, keys)
 
           first_row = List.first(page_key_rows)
           last_row = List.last(page_key_rows)
@@ -232,12 +250,10 @@ defmodule QueryBuilder do
         end
       else
         if ecto_query.preloads != [] do
-          source_schema = QueryBuilder.Utils.root_schema(ecto_query)
-
           has_more_query =
             ecto_query
             |> Query.exclude([:preload, :select])
-            |> Ecto.Query.select([{^source_schema, x}], field(x, :id))
+            |> Ecto.Query.select([{^root_schema, _x}], 1)
 
           has_more? = length(repo.all(has_more_query)) == page_size + 1
 
@@ -439,29 +455,89 @@ defmodule QueryBuilder do
     end)
   end
 
-  defp load_entries_for_page(_repo, _ecto_query, _source_schema, []), do: []
+  defp primary_key_value_from_row(row, [pk_field]) do
+    Map.fetch!(row, Atom.to_string(pk_field))
+  end
 
-  defp load_entries_for_page(repo, ecto_query, source_schema, ids) when is_list(ids) do
+  defp primary_key_value_from_row(row, pk_fields) when is_list(pk_fields) do
+    pk_fields
+    |> Enum.map(&Map.fetch!(row, Atom.to_string(&1)))
+    |> List.to_tuple()
+  end
+
+  defp load_entries_for_page(_repo, _ecto_query, _source_schema, _pk_fields, []), do: []
+
+  defp load_entries_for_page(repo, ecto_query, source_schema, [pk_field], keys)
+       when is_list(keys) do
     entries_query =
       ecto_query
       |> Query.exclude([:limit, :offset, :order_by])
-      |> Ecto.Query.where([{^source_schema, x}], field(x, :id) in ^ids)
+      |> Ecto.Query.where([{^source_schema, x}], field(x, ^pk_field) in ^keys)
 
     entries = repo.all(entries_query)
 
-    entries_by_id =
+    entries_by_key =
       Enum.reduce(entries, %{}, fn entry, acc ->
-        Map.put_new(acc, Map.fetch!(entry, :id), entry)
+        Map.put_new(acc, Map.fetch!(entry, pk_field), entry)
       end)
 
-    Enum.map(ids, fn id ->
-      case Map.fetch(entries_by_id, id) do
+    Enum.map(keys, fn key ->
+      case Map.fetch(entries_by_key, key) do
         {:ok, entry} ->
           entry
 
         :error ->
           raise ArgumentError,
-                "paginate/3 internal error: expected to load an entry with id #{inspect(id)}, " <>
+                "paginate/3 internal error: expected to load an entry with primary key #{inspect(key)}, " <>
+                  "but it was missing from the results"
+      end
+    end)
+  end
+
+  defp load_entries_for_page(repo, ecto_query, source_schema, pk_fields, keys)
+       when is_list(pk_fields) and length(pk_fields) > 1 and is_list(keys) do
+    dynamic_keys =
+      Enum.map(keys, fn key ->
+        key_parts =
+          key
+          |> Tuple.to_list()
+          |> then(&Enum.zip(pk_fields, &1))
+
+        key_parts
+        |> Enum.map(fn {field, value} ->
+          Ecto.Query.dynamic([{^source_schema, x}], field(x, ^field) == ^value)
+        end)
+        |> Enum.reduce(&Ecto.Query.dynamic(^&1 and ^&2))
+      end)
+
+    [first | rest] = dynamic_keys
+    where_dynamic = Enum.reduce(rest, first, &Ecto.Query.dynamic(^&1 or ^&2))
+
+    entries_query =
+      ecto_query
+      |> Query.exclude([:limit, :offset, :order_by])
+      |> Ecto.Query.where(^where_dynamic)
+
+    entries = repo.all(entries_query)
+
+    entries_by_key =
+      Enum.reduce(entries, %{}, fn entry, acc ->
+        key =
+          pk_fields
+          |> Enum.map(&Map.fetch!(entry, &1))
+          |> List.to_tuple()
+
+        Map.put_new(acc, key, entry)
+      end)
+
+    Enum.map(keys, fn key ->
+      case Map.fetch(entries_by_key, key) do
+        {:ok, entry} ->
+          entry
+
+        :error ->
+          raise ArgumentError,
+                "paginate/3 internal error: expected to load an entry with primary key #{inspect(key)}, " <>
                   "but it was missing from the results"
       end
     end)

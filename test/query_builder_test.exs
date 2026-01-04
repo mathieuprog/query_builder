@@ -1,7 +1,7 @@
 defmodule QueryBuilderTest do
   use ExUnit.Case
   import QueryBuilder.Factory
-  alias QueryBuilder.{Repo, User, Article, Event}
+  alias QueryBuilder.{Repo, User, Article, Event, CustomPkUser, CompositeUser}
   require Ecto.Query
   import Ecto.Query
 
@@ -1861,6 +1861,74 @@ defmodule QueryBuilderTest do
         direction: :after,
         unsafe_sql_row_pagination?: true
       )
+    end
+  end
+
+  describe "paginate primary key tie-breaker" do
+    test "paginate uses the root schema primary key as the tie-breaker (non-:id PK)" do
+      _ = Repo.insert!(%CustomPkUser{user_id: 1, name: "Alice"})
+      _ = Repo.insert!(%CustomPkUser{user_id: 2, name: "Alice"})
+      _ = Repo.insert!(%CustomPkUser{user_id: 3, name: "Bob"})
+
+      query =
+        CustomPkUser
+        |> QueryBuilder.order_by(asc: :name)
+
+      %{
+        paginated_entries: [first],
+        pagination: %{cursor_for_entries_after: cursor1}
+      } = QueryBuilder.paginate(query, Repo, page_size: 1, cursor: nil, direction: :after)
+
+      assert first.user_id == 1
+
+      %{
+        paginated_entries: [second],
+        pagination: %{cursor_for_entries_after: cursor2}
+      } = QueryBuilder.paginate(query, Repo, page_size: 1, cursor: cursor1, direction: :after)
+
+      assert second.user_id == 2
+
+      %{paginated_entries: [third]} =
+        QueryBuilder.paginate(query, Repo, page_size: 1, cursor: cursor2, direction: :after)
+
+      assert third.user_id == 3
+    end
+
+    test "paginate supports composite primary keys (ties broken by all PK fields) in ids-first mode" do
+      _ = Repo.insert!(%CompositeUser{tenant_id: 1, user_id: 1, name: "Alice"})
+      _ = Repo.insert!(%CompositeUser{tenant_id: 1, user_id: 2, name: "Alice"})
+      _ = Repo.insert!(%CompositeUser{tenant_id: 2, user_id: 1, name: "Alice"})
+
+      # Force ids-first pagination (single-query cursor pagination is only possible when
+      # all joins are provably to-one association joins).
+      base_query =
+        from(u in CompositeUser,
+          left_join: other in CompositeUser,
+          on: other.user_id == u.user_id and other.tenant_id != u.tenant_id
+        )
+
+      query =
+        base_query
+        |> QueryBuilder.order_by(asc: :name)
+
+      %{
+        paginated_entries: [first],
+        pagination: %{cursor_for_entries_after: cursor1}
+      } = QueryBuilder.paginate(query, Repo, page_size: 1, cursor: nil, direction: :after)
+
+      assert {first.tenant_id, first.user_id} == {1, 1}
+
+      %{
+        paginated_entries: [second],
+        pagination: %{cursor_for_entries_after: cursor2}
+      } = QueryBuilder.paginate(query, Repo, page_size: 1, cursor: cursor1, direction: :after)
+
+      assert {second.tenant_id, second.user_id} == {1, 2}
+
+      %{paginated_entries: [third]} =
+        QueryBuilder.paginate(query, Repo, page_size: 1, cursor: cursor2, direction: :after)
+
+      assert {third.tenant_id, third.user_id} == {2, 1}
     end
   end
 

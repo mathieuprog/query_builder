@@ -43,20 +43,6 @@ defmodule QueryBuilder.Schema do
         def _query(), do: Ecto.Query.from(x in __MODULE__, as: unquote(__CALLER__.module))
 
         def _binding(), do: __MODULE__
-      end,
-      quote do
-        def _join(query, type, source_binding, assoc_field, on) do
-          assoc_binding = _binding(assoc_field)
-
-          Ecto.Query.join(
-            query,
-            type,
-            [{^source_binding, x}],
-            y in assoc(x, ^assoc_field),
-            as: ^assoc_binding,
-            on: ^on
-          )
-        end
       end
     ]
   end
@@ -104,6 +90,32 @@ defmodule QueryBuilder.Schema do
 
     assoc_fields = Enum.map(assoc_bindings, &elem(&1, 0))
 
+    join_clause =
+      if assocs == [] do
+        quote do
+          def _join(_query, _type, _source_binding, assoc_field, _on) do
+            raise ArgumentError,
+                  "unknown association #{inspect(assoc_field)} for #{inspect(__MODULE__)}; " <>
+                    "available associations: #{inspect(__schema__(:associations))}"
+          end
+        end
+      else
+        quote do
+          def _join(query, type, source_binding, assoc_field, on) do
+            assoc_binding = _binding(assoc_field)
+
+            Ecto.Query.join(
+              query,
+              type,
+              [{^source_binding, x}],
+              y in assoc(x, ^assoc_field),
+              as: ^assoc_binding,
+              on: ^on
+            )
+          end
+        end
+      end
+
     quote do
       unquote_splicing(binding_clauses)
 
@@ -130,6 +142,8 @@ defmodule QueryBuilder.Schema do
       end
 
       def _assoc_fields(), do: unquote(assoc_fields)
+
+      unquote(join_clause)
     end
   end
 end
