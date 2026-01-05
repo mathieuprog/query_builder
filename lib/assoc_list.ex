@@ -48,6 +48,7 @@ defmodule QueryBuilder.AssocList do
     two keyword lists – and/or clauses)
     * `preload`: is to be preloaded or not (boolean)
     * `preload_strategy`: `:separate` or `:through_join` (atom; only meaningful when `preload` is true)
+    * `preload_query_opts`: scoped separate-preload options (keyword list; only meaningful when `preload_strategy` is `:separate`)
 
   This information allows the exposed functions such as `QueryBuilder.where/3` to join
   associations, refer to associations, etc.
@@ -112,6 +113,20 @@ defmodule QueryBuilder.AssocList do
                 nil
             end
 
+          preload_query_opts =
+            merge_preload_query_opts!(
+              acc_assoc_data.preload_query_opts,
+              assoc_data.preload_query_opts,
+              acc_assoc_data.source_schema,
+              acc_assoc_data.assoc_field
+            )
+
+          if preload_query_opts != nil and preload_strategy == :through_join do
+            raise ArgumentError,
+                  "conflicting preload requirements for #{inspect(acc_assoc_data.source_schema)}.#{inspect(acc_assoc_data.assoc_field)}: " <>
+                    "cannot combine a scoped separate preload with `preload_through_join`"
+          end
+
           join_filters =
             (acc_assoc_data.join_filters ++ assoc_data.join_filters)
             |> Enum.uniq()
@@ -125,6 +140,7 @@ defmodule QueryBuilder.AssocList do
             |> Map.put(:join_filters, join_filters)
             |> Map.put(:preload, preload)
             |> Map.put(:preload_strategy, preload_strategy)
+            |> Map.put(:preload_query_opts, preload_query_opts)
 
           List.replace_at(new_assoc_list, index, new_assoc_data)
 
@@ -200,6 +216,7 @@ defmodule QueryBuilder.AssocList do
 
     preload = Keyword.get(opts, :preload, false)
     preload_strategy = Keyword.get(opts, :preload_strategy, nil)
+    preload_query_opts = Keyword.get(opts, :preload_query_opts, nil)
 
     assoc_data =
       assoc_data(
@@ -210,6 +227,7 @@ defmodule QueryBuilder.AssocList do
         join_type,
         preload,
         preload_strategy,
+        preload_query_opts,
         join_filters
       )
 
@@ -316,6 +334,7 @@ defmodule QueryBuilder.AssocList do
          join_type,
          preload,
          preload_strategy,
+         preload_query_opts,
          join_filters
        ) do
     assoc_schema = source_schema._assoc_schema(assoc_field)
@@ -335,9 +354,22 @@ defmodule QueryBuilder.AssocList do
       join_filters: join_filters,
       preload: preload,
       preload_strategy: preload_strategy,
+      preload_query_opts: preload_query_opts,
       nested_assocs: [],
       source_binding: source_binding,
       source_schema: source_schema
     }
+  end
+
+  defp merge_preload_query_opts!(nil, nil, _source_schema, _assoc_field), do: nil
+  defp merge_preload_query_opts!(opts, nil, _source_schema, _assoc_field), do: opts
+  defp merge_preload_query_opts!(nil, opts, _source_schema, _assoc_field), do: opts
+
+  defp merge_preload_query_opts!(opts, opts, _source_schema, _assoc_field), do: opts
+
+  defp merge_preload_query_opts!(a, b, source_schema, assoc_field) do
+    raise ArgumentError,
+          "conflicting scoped preload queries for #{inspect(source_schema)}.#{inspect(assoc_field)}: " <>
+            "cannot combine #{inspect(a)} and #{inspect(b)}"
   end
 end

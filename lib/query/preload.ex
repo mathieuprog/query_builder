@@ -2,11 +2,13 @@ defmodule QueryBuilder.Query.Preload do
   @moduledoc false
 
   require Ecto.Query
+  alias QueryBuilder.Query.{OrderBy, Where}
 
   def preload(query, _assoc_list, []), do: query
 
   def preload(ecto_query, assoc_list) do
     flattened_assoc_data = flatten_assoc_data(assoc_list)
+    validate_scoped_separate_preload_leaf_only!(flattened_assoc_data)
 
     # Firstly, give `Ecto.Query.preload/3` the list of associations that have been joined, such as:
     # `Ecto.Query.preload(query, [articles: a, user: u, role: r], [articles: {a, [user: {u, [role: r]}]}])`
@@ -24,19 +26,36 @@ defmodule QueryBuilder.Query.Preload do
     # `Ecto.Query.preload(query, [articles: [comments: :comment_likes]])`
     ecto_query =
       flattened_assoc_data
-      |> Enum.map(fn assoc_data_list ->
-        Enum.reverse(assoc_data_list)
-        |> Enum.drop_while(&join_preload?(ecto_query, &1))
-        |> Enum.map(& &1.assoc_field)
-        |> Enum.reverse()
-      end)
-      |> Enum.reject(&Enum.empty?(&1))
-      |> Enum.map(&convert_list_to_nested_keyword_list(&1))
-      |> Enum.reduce(ecto_query, fn list, ecto_query ->
-        Ecto.Query.preload(ecto_query, ^list)
+      |> Enum.map(&separate_preload_for_path(ecto_query, &1))
+      |> Enum.reject(&(&1 == []))
+      |> Enum.reduce(ecto_query, fn preload, ecto_query ->
+        Ecto.Query.preload(ecto_query, ^preload)
       end)
 
     ecto_query
+  end
+
+  defp validate_scoped_separate_preload_leaf_only!(flattened_assoc_data) do
+    Enum.each(flattened_assoc_data, fn assoc_data_list ->
+      scoped_index =
+        Enum.find_index(assoc_data_list, fn assoc_data ->
+          Map.get(assoc_data, :preload_query_opts) != nil
+        end)
+
+      if scoped_index != nil and scoped_index != length(assoc_data_list) - 1 do
+        assoc_data = Enum.at(assoc_data_list, scoped_index)
+
+        nested =
+          assoc_data_list
+          |> Enum.drop(scoped_index + 1)
+          |> Enum.map(& &1.assoc_field)
+
+        raise ArgumentError,
+              "invalid scoped separate preload for #{inspect(assoc_data.source_schema)}.#{inspect(assoc_data.assoc_field)}: " <>
+                "cannot combine `preload_separate_scoped/3` with nested preloads under that association " <>
+                "(nested: #{inspect(nested)}). Use an explicit Ecto query-based preload query instead."
+      end
+    end)
   end
 
   defp join_preload?(ecto_query, assoc_data) do
@@ -149,6 +168,59 @@ defmodule QueryBuilder.Query.Preload do
     assoc_data_list
     |> Enum.take_while(&join_preload?(ecto_query, &1))
     |> Enum.map(fn assoc_data -> {assoc_data.assoc_binding, assoc_data.assoc_field} end)
+  end
+
+  defp separate_preload_for_path(ecto_query, assoc_data_list) do
+    separate_assoc_data_list =
+      assoc_data_list
+      |> Enum.reverse()
+      |> Enum.drop_while(&join_preload?(ecto_query, &1))
+      |> Enum.reverse()
+
+    case separate_assoc_data_list do
+      [] ->
+        []
+
+      assoc_data_list ->
+        assoc_fields = Enum.map(assoc_data_list, & &1.assoc_field)
+        leaf = List.last(assoc_data_list)
+
+        assoc_fields =
+          case Map.get(leaf, :preload_query_opts) do
+            nil ->
+              assoc_fields
+
+            opts ->
+              assoc_fields ++ [build_scoped_preload_query!(leaf, opts)]
+          end
+
+        convert_list_to_nested_keyword_list(assoc_fields)
+    end
+  end
+
+  defp build_scoped_preload_query!(
+         %{assoc_schema: assoc_schema, source_schema: source_schema, assoc_field: assoc_field},
+         opts
+       ) do
+    try do
+      query = assoc_schema._query()
+
+      query =
+        case Keyword.get(opts, :where, []) do
+          [] -> query
+          filters -> Where.where(query, [], filters, [])
+        end
+
+      case Keyword.get(opts, :order_by, []) do
+        [] -> query
+        order_by -> OrderBy.order_by(query, [], order_by)
+      end
+    rescue
+      e in [ArgumentError, Ecto.QueryError] ->
+        raise ArgumentError,
+              "invalid scoped preload query for #{inspect(source_schema)}.#{inspect(assoc_field)}: " <>
+                Exception.message(e)
+    end
   end
 
   # Removes redundant prefix chains so we don't emit join-preload for both:

@@ -1387,6 +1387,76 @@ defmodule QueryBuilderTest do
     refute Enum.any?(article.comments, &(&1.title == "Not great!"))
   end
 
+  test "preload_separate_scoped applies `where:` to the association preload query" do
+    user =
+      User
+      |> QueryBuilder.where(id: 100)
+      |> QueryBuilder.preload_separate_scoped(:authored_articles,
+        where: [title: "ELIXIR V1.9 RELEASED"]
+      )
+      |> Repo.one!()
+
+    assert ["ELIXIR V1.9 RELEASED"] == Enum.map(user.authored_articles, & &1.title)
+  end
+
+  test "preload_separate_scoped applies `order_by:` to the association preload query" do
+    user =
+      User
+      |> QueryBuilder.where(id: 100)
+      |> QueryBuilder.preload_separate_scoped(:authored_articles, order_by: [desc: :title])
+      |> Repo.one!()
+
+    assert ["MINT, A NEW HTTP CLIENT FOR ELIXIR", "ELIXIR V1.9 RELEASED"] ==
+             Enum.map(user.authored_articles, & &1.title)
+  end
+
+  test "preload_separate_scoped rejects assoc tokens and custom filters" do
+    assert_raise ArgumentError, ~r/does not allow assoc tokens/, fn ->
+      User
+      |> QueryBuilder.preload_separate_scoped(:authored_articles,
+        where: [title@comments: "It's great!"]
+      )
+    end
+
+    assert_raise ArgumentError, ~r/does not accept custom filter functions/, fn ->
+      User
+      |> QueryBuilder.preload_separate_scoped(:authored_articles,
+        where: [fn _resolve -> true end]
+      )
+    end
+
+    assert_raise ArgumentError, ~r/does not allow assoc tokens/, fn ->
+      User
+      |> QueryBuilder.preload_separate_scoped(:authored_articles,
+        where: [{:title, :eq, :title@comments@self}]
+      )
+    end
+  end
+
+  test "preload_separate_scoped conflicts with preload_through_join on the same association" do
+    assert_raise ArgumentError, ~r/conflicting preload requirements/, fn ->
+      User
+      |> QueryBuilder.preload_through_join(:authored_articles)
+      |> QueryBuilder.preload_separate_scoped(:authored_articles,
+        where: [title: "ELIXIR V1.9 RELEASED"]
+      )
+      |> Ecto.Queryable.to_query()
+    end
+  end
+
+  test "preload_separate_scoped raises if combined with nested preloads under the same association" do
+    assert_raise ArgumentError,
+                 ~r/cannot combine `preload_separate_scoped\/3` with nested preloads/,
+                 fn ->
+                   User
+                   |> QueryBuilder.preload_separate_scoped(:authored_articles,
+                     where: [title: "ELIXIR V1.9 RELEASED"]
+                   )
+                   |> QueryBuilder.preload_separate(authored_articles: :comments)
+                   |> Ecto.Queryable.to_query()
+                 end
+  end
+
   test "preload supports mixed chains (join-preload a prefix, query-preload the rest)" do
     alice = Repo.get!(User, 100)
 

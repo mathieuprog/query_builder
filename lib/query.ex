@@ -21,7 +21,14 @@ defmodule QueryBuilder.Query do
           case type do
             :preload ->
               preload_strategy = Map.get(operation, :preload_strategy, nil)
-              [join: :none, preload: true, preload_strategy: preload_strategy]
+              preload_query_opts = Map.get(operation, :preload_query_opts, nil)
+
+              [
+                join: :none,
+                preload: true,
+                preload_strategy: preload_strategy,
+                preload_query_opts: preload_query_opts
+              ]
 
             :inner_join ->
               [join: :inner]
