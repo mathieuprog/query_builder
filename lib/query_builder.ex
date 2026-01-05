@@ -376,7 +376,7 @@ defmodule QueryBuilder do
 
   defp preloaded_to_one_root_assoc?([assoc_data | rest], assoc_field) do
     if assoc_data.assoc_field == assoc_field do
-      assoc_data.preload and assoc_data.cardinality == :one
+      assoc_data.preload_spec != nil and assoc_data.cardinality == :one
     else
       preloaded_to_one_root_assoc?(rest, assoc_field)
     end
@@ -407,7 +407,7 @@ defmodule QueryBuilder do
   defp has_to_many_preloads?([]), do: false
 
   defp has_to_many_preloads?([assoc_data | rest]) do
-    (assoc_data.preload and assoc_data.cardinality == :many) ||
+    (assoc_data.preload_spec != nil and assoc_data.cardinality == :many) ||
       has_to_many_preloads?(assoc_data.nested_assocs) ||
       has_to_many_preloads?(rest)
   end
@@ -852,7 +852,18 @@ defmodule QueryBuilder do
   ```
   """
   def preload(%QueryBuilder.Query{} = query, assoc_fields) do
-    %{query | operations: [%{type: :preload, assocs: assoc_fields, args: []} | query.operations]}
+    %{
+      query
+      | operations: [
+          %{
+            type: :preload,
+            assocs: assoc_fields,
+            preload_spec: QueryBuilder.AssocList.PreloadSpec.new(:auto),
+            args: []
+          }
+          | query.operations
+        ]
+    }
   end
 
   def preload(ecto_query, assoc_fields) do
@@ -874,7 +885,12 @@ defmodule QueryBuilder do
     %{
       query
       | operations: [
-          %{type: :preload, assocs: assoc_fields, preload_strategy: :separate, args: []}
+          %{
+            type: :preload,
+            assocs: assoc_fields,
+            preload_spec: QueryBuilder.AssocList.PreloadSpec.new(:separate),
+            args: []
+          }
           | query.operations
         ]
     }
@@ -931,8 +947,7 @@ defmodule QueryBuilder do
           %{
             type: :preload,
             assocs: assoc_field,
-            preload_strategy: :separate,
-            preload_query_opts: opts,
+            preload_spec: QueryBuilder.AssocList.PreloadSpec.new(:separate, opts),
             args: []
           }
           | query.operations
@@ -968,7 +983,12 @@ defmodule QueryBuilder do
     %{
       query
       | operations: [
-          %{type: :preload, assocs: assoc_fields, preload_strategy: :through_join, args: []}
+          %{
+            type: :preload,
+            assocs: assoc_fields,
+            preload_spec: QueryBuilder.AssocList.PreloadSpec.new(:through_join),
+            args: []
+          }
           | query.operations
         ]
     }
@@ -1856,6 +1876,24 @@ defmodule QueryBuilder do
   def left_join_leaf(query, assoc_fields, filters \\ [], or_filters \\ [])
 
   def left_join_leaf(%QueryBuilder.Query{} = query, assoc_fields, filters, or_filters) do
+    if is_nil(filters) do
+      raise ArgumentError, "left_join_leaf/4 expects `filters` to be a list/keyword list, got nil"
+    end
+
+    if is_nil(or_filters) do
+      raise ArgumentError, "left_join_leaf/4 expects `or_filters` to be a keyword list, got nil"
+    end
+
+    filters = List.wrap(filters)
+    or_filters = List.wrap(or_filters)
+
+    join_filters =
+      if filters == [] and or_filters == [] do
+        []
+      else
+        [filters, or_filters]
+      end
+
     %{
       query
       | operations: [
@@ -1863,7 +1901,7 @@ defmodule QueryBuilder do
             type: :left_join,
             assocs: assoc_fields,
             left_join_mode: :leaf,
-            join_filters: [List.wrap(filters), List.wrap(or_filters)]
+            join_filters: join_filters
           }
           | query.operations
         ]
@@ -1888,6 +1926,24 @@ defmodule QueryBuilder do
   def left_join_path(query, assoc_fields, filters \\ [], or_filters \\ [])
 
   def left_join_path(%QueryBuilder.Query{} = query, assoc_fields, filters, or_filters) do
+    if is_nil(filters) do
+      raise ArgumentError, "left_join_path/4 expects `filters` to be a list/keyword list, got nil"
+    end
+
+    if is_nil(or_filters) do
+      raise ArgumentError, "left_join_path/4 expects `or_filters` to be a keyword list, got nil"
+    end
+
+    filters = List.wrap(filters)
+    or_filters = List.wrap(or_filters)
+
+    join_filters =
+      if filters == [] and or_filters == [] do
+        []
+      else
+        [filters, or_filters]
+      end
+
     %{
       query
       | operations: [
@@ -1895,7 +1951,7 @@ defmodule QueryBuilder do
             type: :left_join,
             assocs: assoc_fields,
             left_join_mode: :path,
-            join_filters: [List.wrap(filters), List.wrap(or_filters)]
+            join_filters: join_filters
           }
           | query.operations
         ]
@@ -1951,53 +2007,77 @@ defmodule QueryBuilder do
                                            &inspect/1
                                          )
 
-  def from_opts(query, nil), do: query
-  def from_opts(query, []), do: query
+  def from_opts(query, opts) do
+    __from_opts__(query, opts, __MODULE__)
+  end
 
-  def from_opts(_query, opts) when not is_list(opts) do
+  @doc false
+  def __from_opts__(query, opts, apply_module) do
+    do_from_opts(query, opts, apply_module)
+  end
+
+  defp do_from_opts(query, nil, _apply_module), do: query
+  defp do_from_opts(query, [], _apply_module), do: query
+
+  defp do_from_opts(_query, opts, _apply_module) when not is_list(opts) do
     raise ArgumentError,
           "from_opts/2 expects opts to be a keyword list like `[where: ...]`, got: #{inspect(opts)}"
   end
 
-  def from_opts(_query, [invalid | _] = opts)
-      when not is_tuple(invalid) or tuple_size(invalid) != 2 do
+  defp do_from_opts(_query, [invalid | _] = opts, _apply_module)
+       when not is_tuple(invalid) or tuple_size(invalid) != 2 do
     raise ArgumentError,
           "from_opts/2 expects opts to be a keyword list (list of `{operation, value}` pairs); " <>
             "got invalid entry: #{inspect(invalid)} in #{inspect(opts)}"
   end
 
-  def from_opts(query, [{operation, arguments} | tail]) do
+  defp do_from_opts(query, [{operation, raw_arguments} | tail], apply_module) do
     unless is_atom(operation) do
       raise ArgumentError,
             "from_opts/2 expects operation keys to be atoms, got: #{inspect(operation)}"
     end
 
-    if is_nil(arguments) do
+    if is_nil(raw_arguments) do
       raise ArgumentError,
             "from_opts/2 does not accept nil for #{inspect(operation)}; omit the operation or pass []"
     end
 
-    raw_arguments = arguments
+    if is_tuple(raw_arguments) do
+      validate_from_opts_tuple_arguments!(query, apply_module, operation, raw_arguments)
+    end
 
-    arguments =
-      case raw_arguments do
-        %QueryBuilder.Args{args: args} when is_list(args) and length(args) >= 2 ->
-          args
-
-        %QueryBuilder.Args{args: args} when is_list(args) ->
-          raise ArgumentError,
-                "from_opts/2 expects QueryBuilder.args/* to wrap at least 2 arguments, got: #{inspect(args)}"
-
-        %QueryBuilder.Args{} = args ->
-          raise ArgumentError,
-                "from_opts/2 expects QueryBuilder.args/* to wrap a list of arguments; got: #{inspect(args)}"
-
-        other ->
-          [other]
-      end
-
+    arguments = normalize_from_opts_arguments!(raw_arguments)
     arity = 1 + length(arguments)
 
+    if apply_module == __MODULE__ do
+      validate_query_builder_from_opts_operation!(operation, arity)
+    else
+      validate_extension_from_opts_operation!(apply_module, operation, arity)
+    end
+
+    result = apply(apply_module, operation, [query | arguments])
+    do_from_opts(result, tail, apply_module)
+  end
+
+  defp normalize_from_opts_arguments!(raw_arguments) do
+    case raw_arguments do
+      %QueryBuilder.Args{args: args} when is_list(args) and length(args) >= 2 ->
+        args
+
+      %QueryBuilder.Args{args: args} when is_list(args) ->
+        raise ArgumentError,
+              "from_opts/2 expects QueryBuilder.args/* to wrap at least 2 arguments, got: #{inspect(args)}"
+
+      %QueryBuilder.Args{} = args ->
+        raise ArgumentError,
+              "from_opts/2 expects QueryBuilder.args/* to wrap a list of arguments; got: #{inspect(args)}"
+
+      other ->
+        [other]
+    end
+  end
+
+  defp validate_query_builder_from_opts_operation!(operation, arity) do
     unless function_exported?(__MODULE__, operation, arity) do
       raise ArgumentError,
             "unknown operation #{inspect(operation)}/#{arity} in from_opts/2; " <>
@@ -2009,34 +2089,65 @@ defmodule QueryBuilder do
             "operation #{inspect(operation)}/#{arity} is not supported in from_opts/2; " <>
               "supported operations: #{@from_opts_supported_operations_string}"
     end
+  end
 
-    if is_tuple(raw_arguments) do
-      cond do
-        operation == :where and tuple_size(raw_arguments) < 2 ->
-          raise ArgumentError,
-                "from_opts/2 expects `where:` tuple filters to have at least 2 elements " <>
-                  "(e.g. `{field, value}` or `{field, operator, value}`); got: #{inspect(raw_arguments)}"
-
-        # Migration guard: v1's from_list/from_opts expanded `{assoc_fields, filters, ...}` tuples
-        # into multi-arg calls. v2 treats tuple values as data, so we fail fast and point callers
-        # at the explicit wrapper (`QueryBuilder.args/*`).
-        operation == :where and from_opts_where_tuple_looks_like_assoc_pack?(query, raw_arguments) ->
-          raise ArgumentError,
-                "from_opts/2 does not treat `where: {assoc_fields, filters, ...}` as a multi-arg call. " <>
-                  "Use `where: QueryBuilder.args(assoc_fields, filters, ...)` instead; got: #{inspect(raw_arguments)}"
-
-        operation in [:where, :select] ->
-          :ok
-
-        true ->
-          raise ArgumentError,
-                "from_opts/2 does not accept tuple values for #{inspect(operation)}. " <>
-                  "If you intended to call #{inspect(operation)} with multiple arguments, " <>
-                  "wrap them with `QueryBuilder.args/*`. Got: #{inspect(raw_arguments)}"
-      end
+  defp validate_extension_from_opts_operation!(apply_module, operation, arity) do
+    if function_exported?(__MODULE__, operation, arity) and
+         operation not in @from_opts_supported_operations do
+      raise ArgumentError,
+            "operation #{inspect(operation)}/#{arity} is not supported in from_opts/2; " <>
+              "supported operations: #{@from_opts_supported_operations_string}"
     end
 
-    apply(__MODULE__, operation, [query | arguments]) |> from_opts(tail)
+    unless function_exported?(apply_module, operation, arity) do
+      available =
+        apply_module.__info__(:functions)
+        |> Enum.map(&elem(&1, 0))
+        |> Enum.uniq()
+        |> Enum.sort()
+        |> Enum.join(", ")
+
+      raise ArgumentError,
+            "unknown operation #{inspect(operation)}/#{arity} in from_opts/2; " <>
+              "expected a public function on #{inspect(apply_module)}. Available operations: #{available}"
+    end
+  end
+
+  defp validate_from_opts_tuple_arguments!(query, apply_module, operation, raw_arguments) do
+    cond do
+      operation == :where and tuple_size(raw_arguments) < 2 ->
+        raise ArgumentError,
+              "from_opts/2 expects `where:` tuple filters to have at least 2 elements " <>
+                "(e.g. `{field, value}` or `{field, operator, value}`); got: #{inspect(raw_arguments)}"
+
+      # Migration guard: v1's from_list/from_opts expanded `{assoc_fields, filters, ...}` tuples
+      # into multi-arg calls. v2 treats tuple values as data, so we fail fast and point callers
+      # at the explicit wrapper (`QueryBuilder.args/*`).
+      operation == :where and from_opts_where_tuple_looks_like_assoc_pack?(query, raw_arguments) ->
+        raise ArgumentError,
+              "from_opts/2 does not treat `where: {assoc_fields, filters, ...}` as a multi-arg call. " <>
+                "Use `where: QueryBuilder.args(assoc_fields, filters, ...)` instead; got: #{inspect(raw_arguments)}"
+
+      operation in [:where, :select] ->
+        :ok
+
+      operation in @from_opts_supported_operations ->
+        raise ArgumentError,
+              "from_opts/2 does not accept tuple values for #{inspect(operation)}. " <>
+                "If you intended to call #{inspect(operation)} with multiple arguments, " <>
+                "wrap them with `QueryBuilder.args/*`. Got: #{inspect(raw_arguments)}"
+
+      apply_module != __MODULE__ and
+        function_exported?(apply_module, operation, tuple_size(raw_arguments) + 1) and
+          not function_exported?(apply_module, operation, 2) ->
+        raise ArgumentError,
+              "from_opts/2 does not expand tuple values into multiple arguments for #{inspect(operation)}. " <>
+                "Use `#{inspect(apply_module)}.args/*` (or `QueryBuilder.args/*`) to wrap multiple arguments; " <>
+                "got: #{inspect(raw_arguments)}"
+
+      true ->
+        :ok
+    end
   end
 
   # Migration shim: v1 exposed from_list/2. Keep it to raise with a clear upgrade hint.
@@ -2188,13 +2299,13 @@ defmodule QueryBuilder do
   end
 
   defp validate_scoped_preload_order_by!(assoc_field, order_by) do
-    unless Keyword.keyword?(order_by) or order_by == [] do
+    unless Keyword.keyword?(order_by) do
       raise ArgumentError,
             "preload_separate_scoped/3 expects `order_by:` to be a keyword list for " <>
               "#{inspect(assoc_field)}, got: #{inspect(order_by)}"
     end
 
-    Enum.each(List.wrap(order_by), fn
+    Enum.each(order_by, fn
       {direction, field} when is_atom(direction) and is_atom(field) ->
         validate_scoped_preload_field_token!(assoc_field, field)
 
@@ -2241,6 +2352,8 @@ defmodule QueryBuilder do
                 "filters for #{inspect(assoc_field)}; got: #{inspect(value)}"
       end
     end
+
+    :ok
   end
 
   defp ensure_query_has_binding(query) do

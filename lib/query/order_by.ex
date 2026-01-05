@@ -10,7 +10,7 @@ defmodule QueryBuilder.Query.OrderBy do
     Ecto.Query.order_by(ecto_query, ^dynamic)
   end
 
-  def build_dynamic(ecto_query, assoc_list, values) do
+  defp build_dynamic(ecto_query, assoc_list, values) do
     values
     |> Enum.filter(&(&1 != []))
     |> Enum.map(fn

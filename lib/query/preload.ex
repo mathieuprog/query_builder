@@ -2,9 +2,9 @@ defmodule QueryBuilder.Query.Preload do
   @moduledoc false
 
   require Ecto.Query
+  alias QueryBuilder.AssocList.PreloadSpec
+  alias QueryBuilder.AssocList.JoinSpec
   alias QueryBuilder.Query.{OrderBy, Where}
-
-  def preload(query, _assoc_list, []), do: query
 
   def preload(ecto_query, assoc_list) do
     flattened_assoc_data = flatten_assoc_data(assoc_list)
@@ -39,7 +39,10 @@ defmodule QueryBuilder.Query.Preload do
     Enum.each(flattened_assoc_data, fn assoc_data_list ->
       scoped_index =
         Enum.find_index(assoc_data_list, fn assoc_data ->
-          Map.get(assoc_data, :preload_query_opts) != nil
+          case assoc_data.preload_spec do
+            %PreloadSpec{query_opts: query_opts} when not is_nil(query_opts) -> true
+            _ -> false
+          end
         end)
 
       if scoped_index != nil and scoped_index != length(assoc_data_list) - 1 do
@@ -59,20 +62,23 @@ defmodule QueryBuilder.Query.Preload do
   end
 
   defp join_preload?(ecto_query, assoc_data) do
-    case Map.get(assoc_data, :preload_strategy) do
-      :through_join ->
+    case Map.get(assoc_data, :preload_spec) do
+      %PreloadSpec{strategy: :through_join} ->
         ensure_effective_joined!(ecto_query, assoc_data)
         true
 
-      :separate ->
+      %PreloadSpec{strategy: :separate} ->
         false
 
-      _auto_or_nil ->
+      %PreloadSpec{strategy: :auto} ->
         effective_joined?(ecto_query, assoc_data)
+
+      nil ->
+        false
     end
   end
 
-  defp preload_through_join?(%{preload_strategy: :through_join}), do: true
+  defp preload_through_join?(%{preload_spec: %PreloadSpec{strategy: :through_join}}), do: true
   defp preload_through_join?(_assoc_data), do: false
 
   defp validate_through_join_prefix!(assoc_data_list) do
@@ -100,28 +106,33 @@ defmodule QueryBuilder.Query.Preload do
     |> Enum.flat_map(&do_flatten_assoc_data/1)
   end
 
-  defp do_flatten_assoc_data(%{nested_assocs: [], preload: preload} = assoc_data) do
-    if preload do
+  defp do_flatten_assoc_data(%{nested_assocs: [], preload_spec: preload_spec} = assoc_data) do
+    if preload_spec != nil do
       [[Map.delete(assoc_data, :nested_assocs)]]
     else
       []
     end
   end
 
-  defp do_flatten_assoc_data(%{nested_assocs: nested_assocs, preload: preload} = assoc_data) do
+  defp do_flatten_assoc_data(
+         %{
+           nested_assocs: nested_assocs,
+           preload_spec: preload_spec
+         } = assoc_data
+       ) do
     assoc_data_without_nested = Map.delete(assoc_data, :nested_assocs)
 
     nested_paths =
       for nested_assoc_data <- nested_assocs,
           rest <- do_flatten_assoc_data(nested_assoc_data) do
-        if preload do
+        if preload_spec != nil do
           [assoc_data_without_nested | rest]
         else
           rest
         end
       end
 
-    if preload and nested_paths == [] do
+    if preload_spec != nil and nested_paths == [] do
       [[assoc_data_without_nested]]
     else
       nested_paths
@@ -156,7 +167,10 @@ defmodule QueryBuilder.Query.Preload do
     [{assoc_field, {binding_expr, build_join_preload(rest)}}]
   end
 
-  defp effective_joined?(ecto_query, %{has_joined: true, assoc_binding: assoc_binding}) do
+  defp effective_joined?(
+         ecto_query,
+         %{join_spec: %JoinSpec{joined?: true}, assoc_binding: assoc_binding}
+       ) do
     Ecto.Query.has_named_binding?(ecto_query, assoc_binding)
   end
 
@@ -186,12 +200,15 @@ defmodule QueryBuilder.Query.Preload do
         leaf = List.last(assoc_data_list)
 
         assoc_fields =
-          case Map.get(leaf, :preload_query_opts) do
-            nil ->
+          case Map.get(leaf, :preload_spec) do
+            %PreloadSpec{query_opts: nil} ->
               assoc_fields
 
-            opts ->
+            %PreloadSpec{query_opts: opts} ->
               assoc_fields ++ [build_scoped_preload_query!(leaf, opts)]
+
+            nil ->
+              assoc_fields
           end
 
         convert_list_to_nested_keyword_list(assoc_fields)
@@ -199,27 +216,20 @@ defmodule QueryBuilder.Query.Preload do
   end
 
   defp build_scoped_preload_query!(
-         %{assoc_schema: assoc_schema, source_schema: source_schema, assoc_field: assoc_field},
+         %{assoc_schema: assoc_schema},
          opts
        ) do
-    try do
-      query = assoc_schema._query()
+    query = assoc_schema._query()
 
-      query =
-        case Keyword.get(opts, :where, []) do
-          [] -> query
-          filters -> Where.where(query, [], filters, [])
-        end
-
-      case Keyword.get(opts, :order_by, []) do
+    query =
+      case Keyword.get(opts, :where, []) do
         [] -> query
-        order_by -> OrderBy.order_by(query, [], order_by)
+        filters -> Where.where(query, [], filters, [])
       end
-    rescue
-      e in [ArgumentError, Ecto.QueryError] ->
-        raise ArgumentError,
-              "invalid scoped preload query for #{inspect(source_schema)}.#{inspect(assoc_field)}: " <>
-                Exception.message(e)
+
+    case Keyword.get(opts, :order_by, []) do
+      [] -> query
+      order_by -> OrderBy.order_by(query, [], order_by)
     end
   end
 

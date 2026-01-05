@@ -2751,8 +2751,8 @@ defmodule QueryBuilderTest do
           %{
             assoc_binding: String.to_atom("binding_#{i}"),
             assoc_field: String.to_atom("field_#{i}"),
-            has_joined: true,
-            preload: true,
+            join_spec: QueryBuilder.AssocList.JoinSpec.new(true, :any, [], true),
+            preload_spec: QueryBuilder.AssocList.PreloadSpec.new(:auto),
             nested_assocs: if(nested, do: [nested], else: [])
           }
         end)

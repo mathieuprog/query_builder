@@ -20,14 +20,22 @@ defmodule QueryBuilder.Query do
         opts =
           case type do
             :preload ->
-              preload_strategy = Map.get(operation, :preload_strategy, nil)
-              preload_query_opts = Map.get(operation, :preload_query_opts, nil)
+              preload_spec =
+                case Map.fetch(operation, :preload_spec) do
+                  {:ok, %QueryBuilder.AssocList.PreloadSpec{} = preload_spec} ->
+                    preload_spec
+
+                  {:ok, other} ->
+                    raise ArgumentError, "invalid preload spec: #{inspect(other)}"
+
+                  :error ->
+                    raise ArgumentError,
+                          "internal error: missing preload spec for preload operation"
+                end
 
               [
                 join: :none,
-                preload: true,
-                preload_strategy: preload_strategy,
-                preload_query_opts: preload_query_opts
+                preload_spec: preload_spec
               ]
 
             :inner_join ->

@@ -97,6 +97,7 @@ defmodule QueryBuilder.Extension do
       defdelegate order_by(query, assoc_fields, value), to: QueryBuilder
       defdelegate preload(query, assoc_fields), to: QueryBuilder
       defdelegate preload_separate(query, assoc_fields), to: QueryBuilder
+      defdelegate preload_separate_scoped(query, assoc_field, opts \\ []), to: QueryBuilder
       defdelegate preload_through_join(query, assoc_fields), to: QueryBuilder
       defdelegate select(query, selection), to: QueryBuilder
       defdelegate select(query, assoc_fields, selection), to: QueryBuilder
@@ -138,137 +139,8 @@ defmodule QueryBuilder.Extension do
       ])
       ```
       """
-      def from_opts(query, nil), do: query
-      def from_opts(query, []), do: query
-
-      def from_opts(_query, opts) when not is_list(opts) do
-        raise ArgumentError,
-              "from_opts/2 expects opts to be a keyword list like `[where: ...]`, got: #{inspect(opts)}"
-      end
-
-      def from_opts(_query, [invalid | _] = opts)
-          when not is_tuple(invalid) or tuple_size(invalid) != 2 do
-        raise ArgumentError,
-              "from_opts/2 expects opts to be a keyword list (list of `{operation, value}` pairs); " <>
-                "got invalid entry: #{inspect(invalid)} in #{inspect(opts)}"
-      end
-
-      def from_opts(query, [{operation, arguments} | tail]) do
-        unless is_atom(operation) do
-          raise ArgumentError,
-                "from_opts/2 expects operation keys to be atoms, got: #{inspect(operation)}"
-        end
-
-        if is_nil(arguments) do
-          raise ArgumentError,
-                "from_opts/2 does not accept nil for #{inspect(operation)}; omit the operation or pass []"
-        end
-
-        if is_tuple(arguments) do
-          # Migration guard: v1's from_list/from_opts expanded `{assoc_fields, filters, ...}` tuples
-          # into multi-arg calls. v2 treats tuple values as data, so we fail fast and point callers
-          # at the explicit wrapper (`QueryBuilder.args/*` / `#{inspect(__MODULE__)}.args/*`).
-          if operation == :where and tuple_size(arguments) < 2 do
-            raise ArgumentError,
-                  "from_opts/2 expects `where:` tuple filters to have at least 2 elements " <>
-                    "(e.g. `{field, value}` or `{field, operator, value}`); got: #{inspect(arguments)}"
-          end
-
-          assoc_pack? =
-            operation == :where and tuple_size(arguments) >= 2 and
-              case elem(arguments, 0) do
-                assoc_fields when is_list(assoc_fields) ->
-                  true
-
-                assoc_fields when is_atom(assoc_fields) ->
-                  second = elem(arguments, 1)
-
-                  cond do
-                    tuple_size(arguments) >= 3 and is_atom(second) ->
-                      false
-
-                    tuple_size(arguments) == 2 and not is_list(second) ->
-                      false
-
-                    true ->
-                      source_schema = QueryBuilder.Utils.root_schema(query)
-                      assoc_fields in source_schema.__schema__(:associations)
-                  end
-
-                _ ->
-                  false
-              end
-
-          cond do
-            assoc_pack? ->
-              raise ArgumentError,
-                    "from_opts/2 does not treat `where: {assoc_fields, filters, ...}` as a multi-arg call. " <>
-                      "Use `where: QueryBuilder.args(assoc_fields, filters, ...)` instead; got: #{inspect(arguments)}"
-
-            operation in [:where, :select] ->
-              :ok
-
-            operation in QueryBuilder.from_opts_supported_operations() ->
-              raise ArgumentError,
-                    "from_opts/2 does not accept tuple values for #{inspect(operation)}. " <>
-                      "If you intended to call #{inspect(operation)} with multiple arguments, " <>
-                      "wrap them with `QueryBuilder.args/*`. Got: #{inspect(arguments)}"
-
-            function_exported?(__MODULE__, operation, tuple_size(arguments) + 1) and
-                not function_exported?(__MODULE__, operation, 2) ->
-              raise ArgumentError,
-                    "from_opts/2 does not expand tuple values into multiple arguments for #{inspect(operation)}. " <>
-                      "Use `#{inspect(__MODULE__)}.args/*` (or `QueryBuilder.args/*`) to wrap multiple arguments; " <>
-                      "got: #{inspect(arguments)}"
-
-            true ->
-              :ok
-          end
-        end
-
-        arguments =
-          case arguments do
-            %QueryBuilder.Args{args: args} when is_list(args) and length(args) >= 2 ->
-              args
-
-            %QueryBuilder.Args{args: args} when is_list(args) ->
-              raise ArgumentError,
-                    "from_opts/2 expects QueryBuilder.args/* to wrap at least 2 arguments, got: #{inspect(args)}"
-
-            %QueryBuilder.Args{} = args ->
-              raise ArgumentError,
-                    "from_opts/2 expects QueryBuilder.args/* to wrap a list of arguments; got: #{inspect(args)}"
-
-            other ->
-              [other]
-          end
-
-        arity = 1 + length(arguments)
-
-        if function_exported?(QueryBuilder, operation, arity) and
-             operation not in QueryBuilder.from_opts_supported_operations() do
-          supported =
-            Enum.map_join(QueryBuilder.from_opts_supported_operations(), ", ", &inspect/1)
-
-          raise ArgumentError,
-                "operation #{inspect(operation)}/#{arity} is not supported in from_opts/2; " <>
-                  "supported operations: #{supported}"
-        end
-
-        unless function_exported?(__MODULE__, operation, arity) do
-          available =
-            __MODULE__.__info__(:functions)
-            |> Enum.map(&elem(&1, 0))
-            |> Enum.uniq()
-            |> Enum.sort()
-            |> Enum.join(", ")
-
-          raise ArgumentError,
-                "unknown operation #{inspect(operation)}/#{arity} in from_opts/2; " <>
-                  "expected a public function on #{inspect(__MODULE__)}. Available operations: #{available}"
-        end
-
-        apply(__MODULE__, operation, [query | arguments]) |> from_opts(tail)
+      def from_opts(query, opts) do
+        QueryBuilder.__from_opts__(query, opts, __MODULE__)
       end
 
       # Migration shim: v1 exposed from_list/2. Keep it to raise with a clear upgrade hint.
