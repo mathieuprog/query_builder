@@ -137,6 +137,11 @@ defmodule QueryBuilder.AssocList do
                 "invalid join spec: expected join filters to be `{filters, or_filters}` pairs, got: #{inspect(other)}"
       end)
 
+      if not required? and qualifier != :any do
+        raise ArgumentError,
+              "invalid join spec: join qualifier requires the association to be joined"
+      end
+
       if normalized_filters != [] and not required? do
         raise ArgumentError,
               "invalid join spec: join filters require the association to be joined"
