@@ -2901,15 +2901,15 @@ defmodule QueryBuilder do
       {field, value} ->
         validate_exists_subquery_filter_tuple!(field, value, context, {field, value})
 
-      {field, _operator, value} ->
-        validate_exists_subquery_filter_tuple!(field, value, context, {field, _operator, value})
+      {field, operator, value} ->
+        validate_exists_subquery_filter_tuple!(field, value, context, {field, operator, value})
 
-      {field, _operator, value, _operator_opts} ->
+      {field, operator, value, operator_opts} ->
         validate_exists_subquery_filter_tuple!(
           field,
           value,
           context,
-          {field, _operator, value, _operator_opts}
+          {field, operator, value, operator_opts}
         )
 
       _other ->

@@ -683,7 +683,7 @@ defmodule QueryBuilderTest do
       )
 
     {sql, _params} = Ecto.Adapters.SQL.to_sql(:all, Repo, query)
-    assert sql =~ "EXISTS"
+    assert String.contains?(sql, "exists(")
   end
 
   test "where_exists_subquery does not support or: (use where_any: instead)" do
