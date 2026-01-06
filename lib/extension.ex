@@ -45,7 +45,7 @@ defmodule QueryBuilder.Extension do
       # Query list can include custom query functions as well:
       # [where_initcap: QB.args(:name, "john"), where: [active: true]]
       MyApp.Accounts.User
-      |> QB.from_opts(opts)
+      |> QB.from_opts(opts, mode: :full)
       |> Repo.all()
     end
   end
@@ -129,18 +129,18 @@ defmodule QueryBuilder.Extension do
       defdelegate limit(query, value), to: QueryBuilder
 
       @doc ~S"""
-      Allows to pass a list of operations through a keyword list.
+      Applies a keyword list of operations to a query.
 
-      Example:
-      ```
-      QueryBuilder.from_opts(query, [
-        where: [name: "John", city: "Anytown"],
-        preload: [articles: :comments]
-      ])
-      ```
+      Like `QueryBuilder.from_opts/*`, this defaults to boundary mode. To allow the
+      full `from_opts` surface (including custom extension operations), pass
+      `mode: :full`.
       """
       def from_opts(query, opts) do
-        QueryBuilder.__from_opts__(query, opts, __MODULE__)
+        from_opts(query, opts, mode: :boundary)
+      end
+
+      def from_opts(query, opts, from_opts_opts) do
+        QueryBuilder.__from_opts__(query, opts, __MODULE__, from_opts_opts)
       end
 
       # Migration shim: v1 exposed from_list/2. Keep it to raise with a clear upgrade hint.

@@ -2247,11 +2247,14 @@ defmodule QueryBuilderTest do
     alice =
       User
       |> QueryBuilder.from_opts(
-        where: [{:email, :equal_to, "alice@example.com"}],
-        where: [name: "Alice", nickname: "Alice"],
-        where: QueryBuilder.args([role: :permissions], name@permissions: "write"),
-        order_by: QueryBuilder.args(:authored_articles, asc: :title@authored_articles),
-        preload: :authored_articles
+        [
+          where: [{:email, :equal_to, "alice@example.com"}],
+          where: [name: "Alice", nickname: "Alice"],
+          where: QueryBuilder.args([role: :permissions], name@permissions: "write"),
+          order_by: QueryBuilder.args(:authored_articles, asc: :title@authored_articles),
+          preload: :authored_articles
+        ],
+        mode: :full
       )
       |> Repo.one!()
 
@@ -2323,7 +2326,7 @@ defmodule QueryBuilderTest do
 
   test "from_opts treats select tuples as data (does not expand tuples into args)" do
     assert User
-           |> QueryBuilder.from_opts(where: [id: 100], select: {:id, :name})
+           |> QueryBuilder.from_opts([where: [id: 100], select: {:id, :name}], mode: :full)
            |> Repo.one() == {100, "Alice"}
   end
 
@@ -2538,9 +2541,8 @@ defmodule QueryBuilderTest do
 
     test "from_opts supports select with a keyword list" do
       assert User
-             |> QueryBuilder.from_opts(
-               where: [id: 100],
-               select: [id: :id, name: :name]
+             |> QueryBuilder.from_opts([where: [id: 100], select: [id: :id, name: :name]],
+               mode: :full
              )
              |> Repo.one() == %{id: 100, name: "Alice"}
     end
@@ -2573,7 +2575,7 @@ defmodule QueryBuilderTest do
 
     assert_raise ArgumentError, ~r/args/i, fn ->
       User
-      |> CustomQueryBuilder.from_opts(where_initcap: {:name, "alice"})
+      |> CustomQueryBuilder.from_opts([where_initcap: {:name, "alice"}], mode: :full)
       |> Repo.all()
     end
 
@@ -2581,10 +2583,13 @@ defmodule QueryBuilderTest do
     alice =
       User
       |> CustomQueryBuilder.from_opts(
-        where_initcap: CustomQueryBuilder.args(:name, "alice"),
-        where: CustomQueryBuilder.args([role: :permissions], name@permissions: "write"),
-        order_by: CustomQueryBuilder.args(:authored_articles, asc: :title@authored_articles),
-        preload: :authored_articles
+        [
+          where_initcap: CustomQueryBuilder.args(:name, "alice"),
+          where: CustomQueryBuilder.args([role: :permissions], name@permissions: "write"),
+          order_by: CustomQueryBuilder.args(:authored_articles, asc: :title@authored_articles),
+          preload: :authored_articles
+        ],
+        mode: :full
       )
       |> Repo.one!()
 

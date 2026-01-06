@@ -16,7 +16,7 @@ defmodule QueryBuilder do
   @doc ~S"""
   Builds an `Ecto.SubQuery` using QueryBuilder operations.
 
-  This is a convenience wrapper around `from_opts/2` + `Ecto.Query.subquery/1`.
+  This is a convenience wrapper around `from_opts/3` (`mode: :full`) + `Ecto.Query.subquery/1`.
 
   Example:
   ```elixir
@@ -33,7 +33,7 @@ defmodule QueryBuilder do
   """
   def subquery(queryable, opts \\ []) do
     queryable
-    |> from_opts(opts)
+    |> from_opts(opts, mode: :full)
     |> Ecto.Queryable.to_query()
     |> Ecto.Query.subquery()
   end
@@ -1722,17 +1722,17 @@ defmodule QueryBuilder do
   def maybe_order_by(query, false, _, _), do: query
 
   @doc ~S"""
-  Wrap multiple arguments for use with `from_opts/2`.
+  Wrap multiple arguments for use with `from_opts(..., mode: :full)`.
 
-  `from_opts/2` normally passes each `{operation, value}` as a single argument to
+  `from_opts` passes each `{operation, value}` as a single argument to
   the operation (i.e. it calls `operation(query, value)`). Use `args/*` when you
   need to call an operation with multiple arguments (like `order_by/3`,
   `select/3`, `where/3`, or custom extension functions).
 
   Examples:
   ```elixir
-  QueryBuilder.from_opts(User, order_by: QueryBuilder.args(:role, asc: :name@role))
-  QueryBuilder.from_opts(User, where: QueryBuilder.args(:role, [name@role: "admin"]))
+  QueryBuilder.from_opts(User, [order_by: QueryBuilder.args(:role, asc: :name@role)], mode: :full)
+  QueryBuilder.from_opts(User, [where: QueryBuilder.args(:role, [name@role: "admin"])], mode: :full)
   ```
   """
   def args(arg1, arg2), do: build_args!([arg1, arg2])
@@ -1964,17 +1964,40 @@ defmodule QueryBuilder do
   end
 
   @doc ~S"""
-  Allows to pass a list of operations through a keyword list.
+  Applies a keyword list of operations to a query.
 
-  Example:
-  ```
+  By default, `from_opts/2` runs in **boundary mode**: it only allows a small
+  join-independent subset of operations so callers don’t need to know whether the
+  base query happens to join/preload anything.
+
+  To opt into the full power of `from_opts`, use `mode: :full`.
+
+  Examples:
+
+  ```elixir
+  # boundary (default)
   QueryBuilder.from_opts(query, [
-    where: [name: "John", city: "Anytown"],
-    preload: [articles: :comments]
+    where: [name: "John"],
+    order_by: [desc: :inserted_at],
+    limit: 50
   ])
+
+  # full (trusted internal usage)
+  QueryBuilder.from_opts(query, [
+    where: QueryBuilder.args(:role, [name@role: "admin"]),
+    preload: :role
+  ], mode: :full)
   ```
   """
-  @from_opts_supported_operations [
+  @from_opts_supported_operations_boundary [
+    :where,
+    :where_any,
+    :order_by,
+    :limit,
+    :offset
+  ]
+
+  @from_opts_supported_operations_full [
     :distinct,
     :group_by,
     :having,
@@ -2001,37 +2024,54 @@ defmodule QueryBuilder do
     :where_not_exists_subquery
   ]
 
-  @from_opts_supported_operations_string Enum.map_join(
-                                           @from_opts_supported_operations,
-                                           ", ",
-                                           &inspect/1
-                                         )
+  @from_opts_supported_operations_boundary_string Enum.map_join(
+                                                    @from_opts_supported_operations_boundary,
+                                                    ", ",
+                                                    &inspect/1
+                                                  )
+
+  @from_opts_supported_operations_full_string Enum.map_join(
+                                                @from_opts_supported_operations_full,
+                                                ", ",
+                                                &inspect/1
+                                              )
 
   def from_opts(query, opts) do
-    __from_opts__(query, opts, __MODULE__)
+    from_opts(query, opts, mode: :boundary)
+  end
+
+  def from_opts(query, opts, from_opts_opts) do
+    __from_opts__(query, opts, __MODULE__, from_opts_opts)
   end
 
   @doc false
   def __from_opts__(query, opts, apply_module) do
-    do_from_opts(query, opts, apply_module)
+    __from_opts__(query, opts, apply_module, mode: :boundary)
   end
 
-  defp do_from_opts(query, nil, _apply_module), do: query
-  defp do_from_opts(query, [], _apply_module), do: query
+  @doc false
+  def __from_opts__(query, opts, apply_module, from_opts_opts) do
+    from_opts_opts = validate_from_opts_options!(from_opts_opts)
+    mode = Keyword.fetch!(from_opts_opts, :mode)
+    do_from_opts(query, opts, apply_module, mode)
+  end
 
-  defp do_from_opts(_query, opts, _apply_module) when not is_list(opts) do
+  defp do_from_opts(query, nil, _apply_module, _mode), do: query
+  defp do_from_opts(query, [], _apply_module, _mode), do: query
+
+  defp do_from_opts(_query, opts, _apply_module, _mode) when not is_list(opts) do
     raise ArgumentError,
           "from_opts/2 expects opts to be a keyword list like `[where: ...]`, got: #{inspect(opts)}"
   end
 
-  defp do_from_opts(_query, [invalid | _] = opts, _apply_module)
+  defp do_from_opts(_query, [invalid | _] = opts, _apply_module, _mode)
        when not is_tuple(invalid) or tuple_size(invalid) != 2 do
     raise ArgumentError,
           "from_opts/2 expects opts to be a keyword list (list of `{operation, value}` pairs); " <>
             "got invalid entry: #{inspect(invalid)} in #{inspect(opts)}"
   end
 
-  defp do_from_opts(query, [{operation, raw_arguments} | tail], apply_module) do
+  defp do_from_opts(query, [{operation, raw_arguments} | tail], apply_module, mode) do
     unless is_atom(operation) do
       raise ArgumentError,
             "from_opts/2 expects operation keys to be atoms, got: #{inspect(operation)}"
@@ -2043,24 +2083,34 @@ defmodule QueryBuilder do
     end
 
     if is_tuple(raw_arguments) do
-      validate_from_opts_tuple_arguments!(query, apply_module, operation, raw_arguments)
+      validate_from_opts_tuple_arguments!(query, apply_module, operation, raw_arguments, mode)
     end
 
-    arguments = normalize_from_opts_arguments!(raw_arguments)
+    arguments = normalize_from_opts_arguments!(raw_arguments, mode)
     arity = 1 + length(arguments)
 
     if apply_module == __MODULE__ do
-      validate_query_builder_from_opts_operation!(operation, arity)
+      validate_query_builder_from_opts_operation!(operation, arity, mode)
     else
-      validate_extension_from_opts_operation!(apply_module, operation, arity)
+      validate_extension_from_opts_operation!(apply_module, operation, arity, mode)
+    end
+
+    if mode == :boundary do
+      validate_from_opts_boundary_arguments!(operation, arguments)
     end
 
     result = apply(apply_module, operation, [query | arguments])
-    do_from_opts(result, tail, apply_module)
+    do_from_opts(result, tail, apply_module, mode)
   end
 
-  defp normalize_from_opts_arguments!(raw_arguments) do
+  defp normalize_from_opts_arguments!(raw_arguments, mode) do
     case raw_arguments do
+      %QueryBuilder.Args{} when mode == :boundary ->
+        raise ArgumentError,
+              "from_opts/2 does not accept QueryBuilder.args/* wrappers in boundary mode; " <>
+                "pass a single argument (where/order_by/limit/offset) and avoid assoc traversal. " <>
+                "If you intended to use the full from_opts surface, pass `mode: :full`."
+
       %QueryBuilder.Args{args: args} when is_list(args) and length(args) >= 2 ->
         args
 
@@ -2077,26 +2127,63 @@ defmodule QueryBuilder do
     end
   end
 
-  defp validate_query_builder_from_opts_operation!(operation, arity) do
+  defp validate_query_builder_from_opts_operation!(operation, arity, mode) do
+    supported_operations =
+      case mode do
+        :boundary -> @from_opts_supported_operations_boundary
+        :full -> @from_opts_supported_operations_full
+      end
+
+    supported_operations_string =
+      case mode do
+        :boundary -> @from_opts_supported_operations_boundary_string
+        :full -> @from_opts_supported_operations_full_string
+      end
+
     unless function_exported?(__MODULE__, operation, arity) do
       raise ArgumentError,
             "unknown operation #{inspect(operation)}/#{arity} in from_opts/2; " <>
-              "supported operations: #{@from_opts_supported_operations_string}"
+              "supported operations: #{supported_operations_string}"
     end
 
-    unless operation in @from_opts_supported_operations do
+    unless operation in supported_operations do
+      extra =
+        if mode == :boundary do
+          " If you intended to use joins/preloads/assoc traversal, pass `mode: :full`."
+        else
+          ""
+        end
+
       raise ArgumentError,
-            "operation #{inspect(operation)}/#{arity} is not supported in from_opts/2; " <>
-              "supported operations: #{@from_opts_supported_operations_string}"
+            "operation #{inspect(operation)}/#{arity} is not supported in from_opts/2 (mode: #{inspect(mode)}); " <>
+              "supported operations: #{supported_operations_string}." <> extra
     end
   end
 
-  defp validate_extension_from_opts_operation!(apply_module, operation, arity) do
-    if function_exported?(__MODULE__, operation, arity) and
-         operation not in @from_opts_supported_operations do
+  defp validate_extension_from_opts_operation!(apply_module, operation, arity, mode) do
+    supported_operations =
+      case mode do
+        :boundary -> @from_opts_supported_operations_boundary
+        :full -> @from_opts_supported_operations_full
+      end
+
+    supported_operations_string =
+      case mode do
+        :boundary -> @from_opts_supported_operations_boundary_string
+        :full -> @from_opts_supported_operations_full_string
+      end
+
+    if mode == :boundary and operation not in supported_operations do
       raise ArgumentError,
-            "operation #{inspect(operation)}/#{arity} is not supported in from_opts/2; " <>
-              "supported operations: #{@from_opts_supported_operations_string}"
+            "operation #{inspect(operation)}/#{arity} is not supported in from_opts/2 (mode: #{inspect(mode)}); " <>
+              "supported operations: #{supported_operations_string}. If you intended to use full mode, pass `mode: :full`."
+    end
+
+    if mode == :full and function_exported?(__MODULE__, operation, arity) and
+         operation not in supported_operations do
+      raise ArgumentError,
+            "operation #{inspect(operation)}/#{arity} is not supported in from_opts/2 (mode: #{inspect(mode)}); " <>
+              "supported operations: #{supported_operations_string}"
     end
 
     unless function_exported?(apply_module, operation, arity) do
@@ -2113,7 +2200,7 @@ defmodule QueryBuilder do
     end
   end
 
-  defp validate_from_opts_tuple_arguments!(query, apply_module, operation, raw_arguments) do
+  defp validate_from_opts_tuple_arguments!(query, apply_module, operation, raw_arguments, mode) do
     cond do
       operation == :where and tuple_size(raw_arguments) < 2 ->
         raise ArgumentError,
@@ -2126,24 +2213,44 @@ defmodule QueryBuilder do
       operation == :where and from_opts_where_tuple_looks_like_assoc_pack?(query, raw_arguments) ->
         raise ArgumentError,
               "from_opts/2 does not treat `where: {assoc_fields, filters, ...}` as a multi-arg call. " <>
-                "Use `where: QueryBuilder.args(assoc_fields, filters, ...)` instead; got: #{inspect(raw_arguments)}"
+                "Use `where: QueryBuilder.args(assoc_fields, filters, ...)` with `mode: :full` instead; " <>
+                "got: #{inspect(raw_arguments)}"
 
       operation in [:where, :select] ->
         :ok
 
-      operation in @from_opts_supported_operations ->
-        raise ArgumentError,
-              "from_opts/2 does not accept tuple values for #{inspect(operation)}. " <>
-                "If you intended to call #{inspect(operation)} with multiple arguments, " <>
-                "wrap them with `QueryBuilder.args/*`. Got: #{inspect(raw_arguments)}"
+      operation in @from_opts_supported_operations_full ->
+        case mode do
+          :boundary ->
+            raise ArgumentError,
+                  "from_opts/2 boundary mode does not accept tuple values for #{inspect(operation)}. " <>
+                    "Pass a single argument value. If you intended a multi-arg call, use `mode: :full` " <>
+                    "and wrap arguments with `QueryBuilder.args/*`. Got: #{inspect(raw_arguments)}"
+
+          :full ->
+            raise ArgumentError,
+                  "from_opts/2 does not accept tuple values for #{inspect(operation)}. " <>
+                    "If you intended to call #{inspect(operation)} with multiple arguments, " <>
+                    "wrap them with `QueryBuilder.args/*`. Got: #{inspect(raw_arguments)}"
+        end
 
       apply_module != __MODULE__ and
         function_exported?(apply_module, operation, tuple_size(raw_arguments) + 1) and
           not function_exported?(apply_module, operation, 2) ->
-        raise ArgumentError,
-              "from_opts/2 does not expand tuple values into multiple arguments for #{inspect(operation)}. " <>
-                "Use `#{inspect(apply_module)}.args/*` (or `QueryBuilder.args/*`) to wrap multiple arguments; " <>
-                "got: #{inspect(raw_arguments)}"
+        case mode do
+          :boundary ->
+            raise ArgumentError,
+                  "from_opts/2 boundary mode does not expand tuple values into multiple arguments for #{inspect(operation)}. " <>
+                    "Pass a single argument value. If you intended a multi-arg call, use `mode: :full` " <>
+                    "and wrap arguments with `#{inspect(apply_module)}.args/*` (or `QueryBuilder.args/*`). " <>
+                    "Got: #{inspect(raw_arguments)}"
+
+          :full ->
+            raise ArgumentError,
+                  "from_opts/2 does not expand tuple values into multiple arguments for #{inspect(operation)}. " <>
+                    "Use `#{inspect(apply_module)}.args/*` (or `QueryBuilder.args/*`) to wrap multiple arguments; " <>
+                    "got: #{inspect(raw_arguments)}"
+        end
 
       true ->
         :ok
@@ -2157,7 +2264,13 @@ defmodule QueryBuilder do
   end
 
   @doc false
-  def from_opts_supported_operations(), do: @from_opts_supported_operations
+  def from_opts_supported_operations(), do: @from_opts_supported_operations_boundary
+
+  @doc false
+  def from_opts_supported_operations(:boundary), do: @from_opts_supported_operations_boundary
+
+  @doc false
+  def from_opts_supported_operations(:full), do: @from_opts_supported_operations_full
 
   # Migration helper: distinguish where filter tuples (data) from the old v1 "assoc_fields pack"
   # tuple that used to mean "call where/3 or where/4". This lets `from_opts/2` raise a targeted
@@ -2213,6 +2326,275 @@ defmodule QueryBuilder do
       true ->
         or_groups
     end
+  end
+
+  defp validate_from_opts_options!(opts) when is_list(opts) do
+    unless Keyword.keyword?(opts) do
+      raise ArgumentError,
+            "from_opts/3 expects options to be a keyword list like `[mode: :boundary]`, got: #{inspect(opts)}"
+    end
+
+    mode = Keyword.get(opts, :mode, :boundary)
+
+    unless mode in [:boundary, :full] do
+      raise ArgumentError,
+            "from_opts/3 expects `mode:` to be :boundary or :full, got: #{inspect(mode)}"
+    end
+
+    case Keyword.keys(opts) -- [:mode] do
+      [] ->
+        :ok
+
+      unknown ->
+        raise ArgumentError,
+              "from_opts/3 got unknown options #{inspect(unknown)}; supported options: [:mode]"
+    end
+
+    [mode: mode]
+  end
+
+  defp validate_from_opts_options!(opts) do
+    raise ArgumentError,
+          "from_opts/3 expects options to be a keyword list like `[mode: :boundary]`, got: #{inspect(opts)}"
+  end
+
+  defp validate_from_opts_boundary_arguments!(:where, [filters]) do
+    validate_from_opts_boundary_filters!(filters, "where")
+  end
+
+  defp validate_from_opts_boundary_arguments!(:where_any, [or_groups]) do
+    validate_from_opts_boundary_or_groups!(or_groups, "where_any")
+  end
+
+  defp validate_from_opts_boundary_arguments!(:order_by, [value]) do
+    validate_from_opts_boundary_order_by!(value)
+  end
+
+  defp validate_from_opts_boundary_arguments!(:limit, [value]) do
+    validate_from_opts_boundary_non_negative_limit_offset!(value, :limit)
+  end
+
+  defp validate_from_opts_boundary_arguments!(:offset, [value]) do
+    validate_from_opts_boundary_non_negative_limit_offset!(value, :offset)
+  end
+
+  defp validate_from_opts_boundary_arguments!(operation, _arguments) do
+    raise ArgumentError,
+          "operation #{inspect(operation)} is not supported in from_opts/2 (mode: :boundary); " <>
+            "supported operations: #{@from_opts_supported_operations_boundary_string}. " <>
+            "If you intended to use full mode, pass `mode: :full`."
+  end
+
+  defp validate_from_opts_boundary_non_negative_limit_offset!(value, operation)
+       when operation in [:limit, :offset] and is_integer(value) do
+    if value < 0 do
+      raise ArgumentError,
+            "from_opts/2 boundary mode expects #{operation} to be non-negative, got: #{inspect(value)}"
+    end
+
+    :ok
+  end
+
+  defp validate_from_opts_boundary_non_negative_limit_offset!(value, operation)
+       when operation in [:limit, :offset] and is_binary(value) do
+    trimmed = String.trim(value)
+
+    case Integer.parse(trimmed) do
+      {int_value, ""} when int_value < 0 ->
+        raise ArgumentError,
+              "from_opts/2 boundary mode expects #{operation} to be non-negative, got: #{inspect(value)}"
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp validate_from_opts_boundary_non_negative_limit_offset!(_value, _operation), do: :ok
+
+  defp validate_from_opts_boundary_or_groups!(or_groups, context) do
+    or_groups = normalize_or_groups!(or_groups, :where_any, "#{context} boundary validation")
+    Enum.each(or_groups, &validate_from_opts_boundary_filters!(&1, context))
+    :ok
+  end
+
+  defp validate_from_opts_boundary_filters!(filters, context) do
+    cond do
+      filters == [] ->
+        :ok
+
+      is_list(filters) ->
+        Enum.each(filters, &validate_from_opts_boundary_filter!(&1, context))
+
+      is_tuple(filters) ->
+        validate_from_opts_boundary_filter!(filters, context)
+
+      is_function(filters) ->
+        raise ArgumentError,
+              "from_opts/2 boundary mode does not allow function filters in #{context}; " <>
+                "use explicit QueryBuilder calls instead"
+
+      true ->
+        raise ArgumentError,
+              "from_opts/2 boundary mode expects #{context} filters to be a keyword list, a list of filters, or a filter tuple; " <>
+                "got: #{inspect(filters)}"
+    end
+  end
+
+  defp validate_from_opts_boundary_filter!(%QueryBuilder.Aggregate{} = aggregate, context) do
+    raise ArgumentError,
+          "from_opts/2 boundary mode does not allow aggregate expressions in #{context}: #{inspect(aggregate)}"
+  end
+
+  defp validate_from_opts_boundary_filter!(
+         {%QueryBuilder.Aggregate{} = aggregate, _value},
+         context
+       ) do
+    raise ArgumentError,
+          "from_opts/2 boundary mode does not allow aggregate expressions in #{context}: #{inspect(aggregate)}"
+  end
+
+  defp validate_from_opts_boundary_filter!(
+         {%QueryBuilder.Aggregate{} = aggregate, _operator, _value},
+         context
+       ) do
+    raise ArgumentError,
+          "from_opts/2 boundary mode does not allow aggregate expressions in #{context}: #{inspect(aggregate)}"
+  end
+
+  defp validate_from_opts_boundary_filter!(
+         {%QueryBuilder.Aggregate{} = aggregate, _operator, _value, _opts},
+         context
+       ) do
+    raise ArgumentError,
+          "from_opts/2 boundary mode does not allow aggregate expressions in #{context}: #{inspect(aggregate)}"
+  end
+
+  defp validate_from_opts_boundary_filter!(fun, context) when is_function(fun) do
+    raise ArgumentError,
+          "from_opts/2 boundary mode does not allow function filters in #{context}; " <>
+            "use explicit QueryBuilder calls instead"
+  end
+
+  defp validate_from_opts_boundary_filter!({field, value}, context) do
+    validate_from_opts_boundary_token!(field, context)
+    validate_from_opts_boundary_filter_value!(value, context)
+    :ok
+  end
+
+  defp validate_from_opts_boundary_filter!({field, operator, value}, context) do
+    validate_from_opts_boundary_filter!({field, operator, value, []}, context)
+  end
+
+  defp validate_from_opts_boundary_filter!({field, operator, value, _operator_opts}, context)
+       when is_atom(operator) do
+    validate_from_opts_boundary_token!(field, context)
+    validate_from_opts_boundary_filter_value!(value, context)
+    :ok
+  end
+
+  defp validate_from_opts_boundary_filter!({field, operator, _value, _operator_opts}, context) do
+    raise ArgumentError,
+          "from_opts/2 boundary mode expects #{context} filter operators to be atoms, got: #{inspect(operator)} for field #{inspect(field)}"
+  end
+
+  defp validate_from_opts_boundary_filter!(other, context) do
+    raise ArgumentError,
+          "from_opts/2 boundary mode received an invalid #{context} filter: #{inspect(other)}"
+  end
+
+  defp validate_from_opts_boundary_filter_value!(value, context)
+       when is_struct(value, Ecto.Query) or is_struct(value, Ecto.SubQuery) or
+              is_struct(value, QueryBuilder.Query) do
+    raise ArgumentError,
+          "from_opts/2 boundary mode does not allow subqueries in #{context} filters; got: #{inspect(value)}"
+  end
+
+  defp validate_from_opts_boundary_filter_value!(value, context)
+       when is_struct(value, Ecto.Query.DynamicExpr) do
+    raise ArgumentError,
+          "from_opts/2 boundary mode does not allow dynamic expressions in #{context} filters; got: #{inspect(value)}"
+  end
+
+  defp validate_from_opts_boundary_filter_value!(value, context) when is_atom(value) do
+    str = Atom.to_string(value)
+
+    if String.ends_with?(str, "@self") do
+      referenced = binary_part(str, 0, byte_size(str) - byte_size("@self"))
+
+      if String.contains?(referenced, "@") do
+        raise ArgumentError,
+              "from_opts/2 boundary mode does not allow assoc tokens in field-to-field filters in #{context}; got: #{inspect(value)}"
+      end
+    end
+
+    :ok
+  end
+
+  defp validate_from_opts_boundary_filter_value!(_value, _context), do: :ok
+
+  defp validate_from_opts_boundary_order_by!(value) do
+    cond do
+      value == [] ->
+        :ok
+
+      is_list(value) ->
+        Enum.each(value, &validate_from_opts_boundary_order_expr!/1)
+
+      true ->
+        raise ArgumentError,
+              "from_opts/2 boundary mode expects order_by to be a keyword list (or list of order expressions), got: #{inspect(value)}"
+    end
+  end
+
+  defp validate_from_opts_boundary_order_expr!({direction, expr}) when is_atom(direction) do
+    validate_from_opts_boundary_order_expr_value!(expr)
+  end
+
+  defp validate_from_opts_boundary_order_expr!(other) do
+    raise ArgumentError,
+          "from_opts/2 boundary mode received an invalid order_by expression: #{inspect(other)}"
+  end
+
+  defp validate_from_opts_boundary_order_expr_value!(%QueryBuilder.Aggregate{} = aggregate) do
+    raise ArgumentError,
+          "from_opts/2 boundary mode does not allow aggregates in order_by: #{inspect(aggregate)}"
+  end
+
+  defp validate_from_opts_boundary_order_expr_value!(%Ecto.Query.DynamicExpr{} = dynamic) do
+    raise ArgumentError,
+          "from_opts/2 boundary mode does not allow dynamic expressions in order_by: #{inspect(dynamic)}"
+  end
+
+  defp validate_from_opts_boundary_order_expr_value!(fun) when is_function(fun) do
+    raise ArgumentError,
+          "from_opts/2 boundary mode does not allow function order_by expressions; " <>
+            "use explicit QueryBuilder calls instead"
+  end
+
+  defp validate_from_opts_boundary_order_expr_value!(token)
+       when is_atom(token) or is_binary(token) do
+    validate_from_opts_boundary_token!(token, "order_by")
+    :ok
+  end
+
+  defp validate_from_opts_boundary_order_expr_value!(other) do
+    raise ArgumentError,
+          "from_opts/2 boundary mode expects order_by expressions to be tokens (atoms/strings), got: #{inspect(other)}"
+  end
+
+  defp validate_from_opts_boundary_token!(token, context)
+       when is_atom(token) or is_binary(token) do
+    if token |> to_string() |> String.contains?("@") do
+      raise ArgumentError,
+            "from_opts/2 boundary mode does not allow assoc tokens (field@assoc) in #{context}: #{inspect(token)}"
+    end
+
+    :ok
+  end
+
+  defp validate_from_opts_boundary_token!(token, context) do
+    raise ArgumentError,
+          "from_opts/2 boundary mode expects #{context} field tokens to be atoms or strings, got: #{inspect(token)}"
   end
 
   defp normalize_preload_separate_scoped_opts!(opts, assoc_field) do
