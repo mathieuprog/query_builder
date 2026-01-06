@@ -6,7 +6,7 @@ defmodule QueryBuilder.Extension do
   Example:
   ```
   defmodule MyApp.QueryBuilder do
-    use QueryBuilder.Extension
+    use QueryBuilder.Extension, from_opts_full_ops: [:where_initcap]
 
     defmacro __using__(opts) do
       quote do
@@ -52,9 +52,22 @@ defmodule QueryBuilder.Extension do
   ```
   """
 
-  defmacro __using__(_opts) do
+  defmacro __using__(opts) do
+    opts = validate_extension_opts!(opts)
+
+    from_opts_full_ops = Keyword.get(opts, :from_opts_full_ops, [])
+    boundary_ops_user_asserted = Keyword.get(opts, :boundary_ops_user_asserted, [])
+
     quote do
       # Expose all QueryBuilder functions: QueryBuilder.__info__(:functions)
+
+      @doc false
+      def __query_builder_extension_from_opts_config__() do
+        %{
+          from_opts_full_ops: unquote(from_opts_full_ops),
+          boundary_ops_user_asserted: unquote(boundary_ops_user_asserted)
+        }
+      end
 
       defdelegate left_join(query, assoc_fields, filters \\ [], or_filters \\ []),
         to: QueryBuilder
@@ -130,9 +143,14 @@ defmodule QueryBuilder.Extension do
       @doc ~S"""
       Applies a keyword list of operations to a query.
 
-      Like `QueryBuilder.from_opts/*`, this defaults to boundary mode. To allow the
-      full `from_opts` surface (including custom extension operations), pass
-      `mode: :full`.
+      Like `QueryBuilder.from_opts/*`, this defaults to boundary mode.
+
+      To use the full `from_opts` surface, pass `mode: :full`. Custom extension
+      operations are rejected by default in full mode; allowlist them via
+      `use QueryBuilder.Extension, from_opts_full_ops: [...]`.
+
+      Note: operations allowlisted via `boundary_ops_user_asserted: [...]` are also
+      accepted in full mode (full is a superset).
       """
       def from_opts(query, opts) do
         from_opts(query, opts, mode: :boundary)
@@ -147,6 +165,53 @@ defmodule QueryBuilder.Extension do
         raise ArgumentError,
               "from_list/2 was renamed to from_opts/2; please update your call sites"
       end
+    end
+  end
+
+  defp validate_extension_opts!(opts) when is_list(opts) do
+    unless Keyword.keyword?(opts) do
+      raise ArgumentError,
+            "use QueryBuilder.Extension expects options to be a keyword list, got: #{inspect(opts)}"
+    end
+
+    allowed_keys = [:from_opts_full_ops, :boundary_ops_user_asserted]
+
+    case Keyword.keys(opts) -- allowed_keys do
+      [] ->
+        :ok
+
+      unknown ->
+        raise ArgumentError,
+              "use QueryBuilder.Extension got unknown options #{inspect(unknown)}; " <>
+                "supported options: #{inspect(allowed_keys)}"
+    end
+
+    validate_extension_ops_list!(opts, :from_opts_full_ops)
+    validate_extension_ops_list!(opts, :boundary_ops_user_asserted)
+
+    opts
+  end
+
+  defp validate_extension_opts!(opts) do
+    raise ArgumentError,
+          "use QueryBuilder.Extension expects options to be a keyword list, got: #{inspect(opts)}"
+  end
+
+  defp validate_extension_ops_list!(opts, key) do
+    case Keyword.get(opts, key, []) do
+      list when is_list(list) ->
+        Enum.each(list, fn
+          op when is_atom(op) ->
+            :ok
+
+          other ->
+            raise ArgumentError,
+                  "use QueryBuilder.Extension expects #{inspect(key)} to be a list of atoms, got: #{inspect(other)} in #{inspect(list)}"
+        end)
+
+      other ->
+        raise ArgumentError,
+              "use QueryBuilder.Extension expects #{inspect(key)} to be a list of atoms, got: #{inspect(other)}"
     end
   end
 end

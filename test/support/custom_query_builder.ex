@@ -1,5 +1,5 @@
 defmodule CustomQueryBuilder do
-  use QueryBuilder.Extension
+  use QueryBuilder.Extension, from_opts_full_ops: [:where_initcap]
   require Ecto.Query
 
   defmacro __using__(opts) do

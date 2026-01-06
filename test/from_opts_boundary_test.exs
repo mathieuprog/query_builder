@@ -118,4 +118,53 @@ defmodule QueryBuilder.FromOptsBoundaryTest do
 
     refute_received {:secret_called, :pwned}
   end
+
+  defmodule AllowlistedFullExtension do
+    use QueryBuilder.Extension, from_opts_full_ops: [:secret]
+
+    def secret(query, value) do
+      send(self(), {:secret_called, value})
+      query
+    end
+  end
+
+  test "extension from_opts/3 full mode only allows explicitly allowlisted extension operations" do
+    from_opts = [where: [id: 100], secret: :pwned]
+
+    assert_raise ArgumentError, ~r/from_opts_full_ops/i, fn ->
+      UnsafeExtension.from_opts(User, from_opts, mode: :full)
+    end
+
+    refute_received {:secret_called, :pwned}
+
+    assert match?(
+             %QueryBuilder.Query{},
+             AllowlistedFullExtension.from_opts(User, from_opts, mode: :full)
+           )
+
+    assert_received {:secret_called, :pwned}
+  end
+
+  defmodule AllowlistedBoundaryExtension do
+    use QueryBuilder.Extension, boundary_ops_user_asserted: [:where_not_deleted]
+
+    def where_not_deleted(query, true), do: where(query, deleted: false)
+    def where_not_deleted(query, false), do: query
+  end
+
+  test "extension from_opts/2 boundary mode can allow user-asserted extension operations" do
+    assert match?(
+             %QueryBuilder.Query{},
+             AllowlistedBoundaryExtension.from_opts(User, where_not_deleted: true)
+           )
+
+    assert match?(
+             %QueryBuilder.Query{},
+             AllowlistedBoundaryExtension.from_opts(
+               User,
+               [where: [id: 100], where_not_deleted: true],
+               mode: :full
+             )
+           )
+  end
 end

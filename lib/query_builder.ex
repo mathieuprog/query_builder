@@ -2015,25 +2015,40 @@ defmodule QueryBuilder do
   def __from_opts__(query, opts, apply_module, from_opts_opts) do
     from_opts_opts = validate_from_opts_options!(from_opts_opts)
     mode = Keyword.fetch!(from_opts_opts, :mode)
-    do_from_opts(query, opts, apply_module, mode)
+
+    extension_config =
+      if apply_module == __MODULE__ do
+        nil
+      else
+        extension_from_opts_config!(apply_module)
+      end
+
+    do_from_opts(query, opts, apply_module, mode, extension_config)
   end
 
-  defp do_from_opts(query, nil, _apply_module, _mode), do: query
-  defp do_from_opts(query, [], _apply_module, _mode), do: query
+  defp do_from_opts(query, nil, _apply_module, _mode, _extension_config), do: query
+  defp do_from_opts(query, [], _apply_module, _mode, _extension_config), do: query
 
-  defp do_from_opts(_query, opts, _apply_module, _mode) when not is_list(opts) do
+  defp do_from_opts(_query, opts, _apply_module, _mode, _extension_config)
+       when not is_list(opts) do
     raise ArgumentError,
           "from_opts/2 expects opts to be a keyword list like `[where: ...]`, got: #{inspect(opts)}"
   end
 
-  defp do_from_opts(_query, [invalid | _] = opts, _apply_module, _mode)
+  defp do_from_opts(_query, [invalid | _] = opts, _apply_module, _mode, _extension_config)
        when not is_tuple(invalid) or tuple_size(invalid) != 2 do
     raise ArgumentError,
           "from_opts/2 expects opts to be a keyword list (list of `{operation, value}` pairs); " <>
             "got invalid entry: #{inspect(invalid)} in #{inspect(opts)}"
   end
 
-  defp do_from_opts(query, [{operation, raw_arguments} | tail], apply_module, mode) do
+  defp do_from_opts(
+         query,
+         [{operation, raw_arguments} | tail],
+         apply_module,
+         mode,
+         extension_config
+       ) do
     unless is_atom(operation) do
       raise ArgumentError,
             "from_opts/2 expects operation keys to be atoms, got: #{inspect(operation)}"
@@ -2054,15 +2069,21 @@ defmodule QueryBuilder do
     if apply_module == __MODULE__ do
       validate_query_builder_from_opts_operation!(operation, arity, mode)
     else
-      validate_extension_from_opts_operation!(apply_module, operation, arity, mode)
+      validate_extension_from_opts_operation!(
+        apply_module,
+        operation,
+        arity,
+        mode,
+        extension_config
+      )
     end
 
-    if mode == :boundary do
+    if mode == :boundary and operation in @from_opts_supported_operations_boundary do
       validate_from_opts_boundary_arguments!(operation, arguments)
     end
 
     result = apply(apply_module, operation, [query | arguments])
-    do_from_opts(result, tail, apply_module, mode)
+    do_from_opts(result, tail, apply_module, mode, extension_config)
   end
 
   defp normalize_from_opts_arguments!(raw_arguments, mode) do
@@ -2122,7 +2143,13 @@ defmodule QueryBuilder do
     end
   end
 
-  defp validate_extension_from_opts_operation!(apply_module, operation, arity, mode) do
+  defp validate_extension_from_opts_operation!(
+         apply_module,
+         operation,
+         arity,
+         mode,
+         extension_config
+       ) do
     supported_operations =
       case mode do
         :boundary -> @from_opts_supported_operations_boundary
@@ -2135,17 +2162,47 @@ defmodule QueryBuilder do
         :full -> @from_opts_supported_operations_full_string
       end
 
-    if mode == :boundary and operation not in supported_operations do
-      raise ArgumentError,
-            "operation #{inspect(operation)}/#{arity} is not supported in from_opts/2 (mode: #{inspect(mode)}); " <>
-              "supported operations: #{supported_operations_string}. If you intended to use full mode, pass `mode: :full`."
-    end
+    extension_boundary_ops = Map.get(extension_config, :boundary_ops_user_asserted, [])
 
-    if mode == :full and function_exported?(__MODULE__, operation, arity) and
-         operation not in supported_operations do
-      raise ArgumentError,
-            "operation #{inspect(operation)}/#{arity} is not supported in from_opts/2 (mode: #{inspect(mode)}); " <>
-              "supported operations: #{supported_operations_string}"
+    extension_full_ops =
+      Map.get(extension_config, :from_opts_full_ops, [])
+      |> Kernel.++(extension_boundary_ops)
+      |> Enum.uniq()
+
+    cond do
+      mode == :boundary and operation in supported_operations ->
+        :ok
+
+      mode == :boundary and operation in extension_boundary_ops ->
+        if function_exported?(__MODULE__, operation, arity) do
+          raise ArgumentError,
+                "operation #{inspect(operation)}/#{arity} is a QueryBuilder operation and is not supported in from_opts/2 (mode: :boundary). " <>
+                  "Use `mode: :full` instead of extending boundary mode."
+        end
+
+        :ok
+
+      mode == :boundary ->
+        raise ArgumentError,
+              "operation #{inspect(operation)}/#{arity} is not supported in from_opts/2 (mode: :boundary); " <>
+                "supported operations: #{supported_operations_string}. If you intended to use full mode, pass `mode: :full`."
+
+      mode == :full and function_exported?(__MODULE__, operation, arity) and
+          operation not in supported_operations ->
+        raise ArgumentError,
+              "operation #{inspect(operation)}/#{arity} is not supported in from_opts/2 (mode: :full); " <>
+                "supported operations: #{supported_operations_string}"
+
+      mode == :full and operation in supported_operations ->
+        :ok
+
+      mode == :full and operation in extension_full_ops ->
+        :ok
+
+      mode == :full ->
+        raise ArgumentError,
+              "operation #{inspect(operation)}/#{arity} is not supported in from_opts/2 (mode: :full) for #{inspect(apply_module)}. " <>
+                "To allow custom extension operations, pass `use QueryBuilder.Extension, from_opts_full_ops: [...]` when defining #{inspect(apply_module)}."
     end
 
     unless function_exported?(apply_module, operation, arity) do
@@ -2159,6 +2216,43 @@ defmodule QueryBuilder do
       raise ArgumentError,
             "unknown operation #{inspect(operation)}/#{arity} in from_opts/2; " <>
               "expected a public function on #{inspect(apply_module)}. Available operations: #{available}"
+    end
+  end
+
+  defp extension_from_opts_config!(apply_module) do
+    config =
+      if function_exported?(apply_module, :__query_builder_extension_from_opts_config__, 0) do
+        apply(apply_module, :__query_builder_extension_from_opts_config__, [])
+      else
+        %{}
+      end
+
+    unless is_map(config) do
+      raise ArgumentError,
+            "#{inspect(apply_module)}.__query_builder_extension_from_opts_config__/0 must return a map, got: #{inspect(config)}"
+    end
+
+    validate_extension_config_ops_list!(apply_module, config, :from_opts_full_ops)
+    validate_extension_config_ops_list!(apply_module, config, :boundary_ops_user_asserted)
+
+    config
+  end
+
+  defp validate_extension_config_ops_list!(apply_module, config, key) do
+    case Map.get(config, key, []) do
+      list when is_list(list) ->
+        Enum.each(list, fn
+          op when is_atom(op) ->
+            :ok
+
+          other ->
+            raise ArgumentError,
+                  "#{inspect(apply_module)}.__query_builder_extension_from_opts_config__/0 expects #{inspect(key)} to be a list of atoms, got: #{inspect(other)} in #{inspect(list)}"
+        end)
+
+      other ->
+        raise ArgumentError,
+              "#{inspect(apply_module)}.__query_builder_extension_from_opts_config__/0 expects #{inspect(key)} to be a list of atoms, got: #{inspect(other)}"
     end
   end
 
