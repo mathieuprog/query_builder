@@ -640,6 +640,52 @@ defmodule QueryBuilderTest do
     end
   end
 
+  test "where_exists_subquery rejects root field tuple filters in where:" do
+    assert_raise ArgumentError, ~r/does not allow root field filters/, fn ->
+      User
+      |> QueryBuilder.where_exists_subquery(
+        :authored_articles,
+        where: [deleted: false, title@authored_articles: "ELIXIR V1.9 RELEASED"],
+        scope: []
+      )
+    end
+  end
+
+  test "where_exists_subquery rejects root field tuple filters in scope:" do
+    assert_raise ArgumentError, ~r/does not allow root field filters/, fn ->
+      User
+      |> QueryBuilder.where_exists_subquery(
+        :authored_articles,
+        where: [title@authored_articles: "ELIXIR V1.9 RELEASED"],
+        scope: [deleted: false]
+      )
+    end
+  end
+
+  test "where_exists_subquery rejects root field tuple filters in where_any:" do
+    assert_raise ArgumentError, ~r/does not allow root field filters/, fn ->
+      User
+      |> QueryBuilder.where_exists_subquery(
+        :authored_articles,
+        where_any: [[deleted: false], [title@authored_articles: "ELIXIR V1.9 RELEASED"]],
+        scope: []
+      )
+    end
+  end
+
+  test "where_exists_subquery allows @self field-to-field comparisons" do
+    query =
+      User
+      |> QueryBuilder.where_exists_subquery(
+        :authored_articles,
+        where: [{:id@authored_articles, :gt, :id@self}],
+        scope: []
+      )
+
+    {sql, _params} = Ecto.Adapters.SQL.to_sql(:all, Repo, query)
+    assert sql =~ "EXISTS"
+  end
+
   test "where_exists_subquery does not support or: (use where_any: instead)" do
     assert_raise ArgumentError, ~r/does not support `or:`/, fn ->
       User
@@ -739,6 +785,59 @@ defmodule QueryBuilderTest do
 
     assert users == Enum.uniq_by(users, & &1.id)
     assert Enum.map(users, & &1.name) == ["Alice"]
+  end
+
+  test "where_has is a shorthand for where_exists_subquery" do
+    users =
+      User
+      |> QueryBuilder.where_has(:authored_articles,
+        title@authored_articles: "ELIXIR V1.9 RELEASED"
+      )
+      |> Repo.all()
+
+    assert users == Enum.uniq_by(users, & &1.id)
+    assert Enum.map(users, & &1.name) == ["Alice"]
+  end
+
+  test "where_has supports nested association paths" do
+    users =
+      User
+      |> QueryBuilder.where_has([authored_articles: :comments], title@comments: "It's great!")
+      |> Repo.all()
+
+    assert users == Enum.uniq_by(users, & &1.id)
+
+    assert users
+           |> Enum.map(& &1.name)
+           |> Enum.sort() == ["Alice", "Bob", "Charlie"]
+  end
+
+  test "where_missing is a shorthand for where_not_exists_subquery" do
+    where_missing_ids =
+      User
+      |> QueryBuilder.where_missing([authored_articles: :comments], title@comments: "It's great!")
+      |> Repo.all()
+      |> Enum.map(& &1.id)
+      |> Enum.sort()
+
+    where_not_exists_ids =
+      User
+      |> QueryBuilder.where_not_exists_subquery(
+        [authored_articles: :comments],
+        where: [title@comments: "It's great!"],
+        scope: []
+      )
+      |> Repo.all()
+      |> Enum.map(& &1.id)
+      |> Enum.sort()
+
+    assert where_missing_ids == where_not_exists_ids
+  end
+
+  test "where_has requires explicit association tokens in filters" do
+    assert_raise ArgumentError, ~r/requires explicit association tokens/i, fn ->
+      QueryBuilder.where_has(User, :authored_articles, title: "x")
+    end
   end
 
   test "maybe where" do

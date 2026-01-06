@@ -127,6 +127,8 @@ defmodule QueryBuilder.Extension do
       defdelegate where(query, assoc_fields, filters, or_filters \\ []), to: QueryBuilder
       defdelegate where_any(query, or_groups), to: QueryBuilder
       defdelegate where_any(query, assoc_fields, or_groups), to: QueryBuilder
+      defdelegate where_has(query, assoc_fields, filters \\ []), to: QueryBuilder
+      defdelegate where_missing(query, assoc_fields, filters \\ []), to: QueryBuilder
       defdelegate where_exists(query, assoc_fields, filters, or_filters \\ []), to: QueryBuilder
 
       defdelegate where_not_exists(query, assoc_fields, filters, or_filters \\ []),

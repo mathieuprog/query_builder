@@ -1204,6 +1204,82 @@ defmodule QueryBuilder do
     do: %QueryBuilder.Aggregate{op: :max, arg: token, modifier: nil}
 
   @doc ~S"""
+  A shorthand for `where_exists_subquery/3` (“has associated rows”).
+
+  It applies a correlated `EXISTS(...)` filter for the given association path.
+  `filters` are AND-ed inside the subquery.
+  Filter fields must be explicit association tokens (contain `@`), because the
+  predicate runs inside the association subquery.
+
+  Examples:
+
+  ```elixir
+  # Equivalent to where_exists_subquery(:authored_articles, where: [published@authored_articles: true], scope: [])
+  User |> QueryBuilder.where_has(:authored_articles, published@authored_articles: true)
+  ```
+
+  ```elixir
+  User |> QueryBuilder.where_has([authored_articles: :comments], title@comments: "It's great!")
+  ```
+  """
+  def where_has(query, assoc_fields, filters \\ [])
+
+  def where_has(%QueryBuilder.Query{} = query, assoc_fields, filters) do
+    if assoc_fields in [nil, []] do
+      raise ArgumentError,
+            "where_has/3 requires a non-empty assoc_fields argument " <>
+              "(e.g. `where_has(:comments, ...)` or `where_has([articles: :comments], ...)`)"
+    end
+
+    if is_nil(filters) do
+      raise ArgumentError,
+            "where_has/3 expects filters to be a keyword list (or a list of filters); got nil"
+    end
+
+    filters = List.wrap(filters)
+    validate_where_has_filters!(filters, "where_has/3")
+
+    where_exists_subquery(query, assoc_fields, where: filters, scope: [])
+  end
+
+  def where_has(ecto_query, assoc_fields, filters) do
+    ecto_query = ensure_query_has_binding(ecto_query)
+    where_has(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields, filters)
+  end
+
+  @doc ~S"""
+  A shorthand for `where_not_exists_subquery/3` (“missing associated rows”).
+
+  This is the `NOT EXISTS(...)` counterpart to `where_has/3`.
+  Filter fields must be explicit association tokens (contain `@`), because the
+  predicate runs inside the association subquery.
+  """
+  def where_missing(query, assoc_fields, filters \\ [])
+
+  def where_missing(%QueryBuilder.Query{} = query, assoc_fields, filters) do
+    if assoc_fields in [nil, []] do
+      raise ArgumentError,
+            "where_missing/3 requires a non-empty assoc_fields argument " <>
+              "(e.g. `where_missing(:comments, ...)` or `where_missing([articles: :comments], ...)`)"
+    end
+
+    if is_nil(filters) do
+      raise ArgumentError,
+            "where_missing/3 expects filters to be a keyword list (or a list of filters); got nil"
+    end
+
+    filters = List.wrap(filters)
+    validate_where_has_filters!(filters, "where_missing/3")
+
+    where_not_exists_subquery(query, assoc_fields, where: filters, scope: [])
+  end
+
+  def where_missing(ecto_query, assoc_fields, filters) do
+    ecto_query = ensure_query_has_binding(ecto_query)
+    where_missing(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields, filters)
+  end
+
+  @doc ~S"""
   A correlated `EXISTS(...)` subquery filter.
 
   This is the explicit alternative to `where/4` when filtering through to-many
@@ -1223,6 +1299,10 @@ defmodule QueryBuilder do
   `scope:` is **required** to make the “new query block” boundary explicit. It is
   applied inside the `EXISTS(...)` subquery (and is not inferred from outer joins).
   Pass `scope: []` to explicitly declare “no extra scoping”.
+
+  Tuple filters inside the subquery must target association fields (use `field@assoc`).
+  Root-field filters belong on the outer query. For per-parent comparisons, use
+  field-to-field values via the `@self` marker (e.g. `{:inserted_at@articles, :gt, :inserted_at@self}`).
 
   `where:` adds AND filters inside the subquery. To express OR groups, use
   `where_any: [[...], ...]`.
@@ -1264,6 +1344,16 @@ defmodule QueryBuilder do
             "where_exists_subquery/3 does not support `or:`; use `where_any: [[...], ...]`"
     end
 
+    validate_exists_subquery_filters!(
+      scope,
+      "where_exists_subquery/3 does not allow root field filters (no `@`) in `scope:`"
+    )
+
+    validate_exists_subquery_filters!(
+      where_filters,
+      "where_exists_subquery/3 does not allow root field filters (no `@`) in `where:`"
+    )
+
     where_any_groups =
       case where_any do
         :__missing__ -> []
@@ -1271,6 +1361,13 @@ defmodule QueryBuilder do
       end
 
     where_any_groups = Enum.reject(where_any_groups, &(&1 == []))
+
+    Enum.each(where_any_groups, fn group ->
+      validate_exists_subquery_filters!(
+        group,
+        "where_exists_subquery/3 does not allow root field filters (no `@`) in `where_any:`"
+      )
+    end)
 
     {predicate_filters, predicate_or_filters} =
       case where_any_groups do
@@ -1980,8 +2077,10 @@ defmodule QueryBuilder do
     :select_merge,
     :where,
     :where_any,
+    :where_has,
     :where_exists,
     :where_exists_subquery,
+    :where_missing,
     :where_not_exists,
     :where_not_exists_subquery
   ]
@@ -2792,6 +2891,93 @@ defmodule QueryBuilder do
     end
 
     :ok
+  end
+
+  defp validate_exists_subquery_filters!(filters, context) do
+    Enum.each(filters, fn
+      fun when is_function(fun) ->
+        :ok
+
+      {field, value} ->
+        validate_exists_subquery_filter_tuple!(field, value, context, {field, value})
+
+      {field, _operator, value} ->
+        validate_exists_subquery_filter_tuple!(field, value, context, {field, _operator, value})
+
+      {field, _operator, value, _operator_opts} ->
+        validate_exists_subquery_filter_tuple!(
+          field,
+          value,
+          context,
+          {field, _operator, value, _operator_opts}
+        )
+
+      _other ->
+        :ok
+    end)
+  end
+
+  defp validate_exists_subquery_filter_tuple!(field, value, context, filter_tuple)
+       when is_atom(field) or is_binary(field) do
+    token = to_string(field)
+
+    if not String.contains?(token, "@") and not exists_subquery_value_is_field?(value) do
+      raise ArgumentError,
+            "#{context}. Move root filters to the outer query (e.g. `QueryBuilder.where/2`). " <>
+              "Got: #{inspect(filter_tuple)}"
+    end
+
+    :ok
+  end
+
+  defp validate_exists_subquery_filter_tuple!(_field, _value, _context, _filter_tuple), do: :ok
+
+  defp exists_subquery_value_is_field?(val) when val in [nil, false, true], do: false
+
+  defp exists_subquery_value_is_field?(val) when is_atom(val) or is_binary(val) do
+    val |> to_string() |> String.ends_with?("@self")
+  end
+
+  defp exists_subquery_value_is_field?(_val), do: false
+
+  defp validate_where_has_filters!(filters, context) do
+    Enum.each(filters, fn
+      fun when is_function(fun) ->
+        :ok
+
+      {field, _value} ->
+        validate_where_has_field_token!(field, context)
+
+      {field, _operator, _value} ->
+        validate_where_has_field_token!(field, context)
+
+      {field, _operator, _value, _operator_opts} ->
+        validate_where_has_field_token!(field, context)
+
+      other ->
+        raise ArgumentError,
+              "#{context} got an invalid filter entry: #{inspect(other)}. " <>
+                "Expected `{field, value}`, `{field, operator, value}`, `{field, operator, value, operator_opts}`, " <>
+                "or a 1-arity function."
+    end)
+  end
+
+  defp validate_where_has_field_token!(field, context) when is_atom(field) or is_binary(field) do
+    token = to_string(field)
+
+    if not String.contains?(token, "@") do
+      raise ArgumentError,
+            "#{context} requires explicit association tokens (containing `@`) in filters; " <>
+              "got: #{inspect(field)}. " <>
+              "Example: `#{token}@assoc: value`."
+    end
+
+    :ok
+  end
+
+  defp validate_where_has_field_token!(other, context) do
+    raise ArgumentError,
+          "#{context} expects field tokens to be atoms or strings, got: #{inspect(other)}"
   end
 
   defp ensure_query_has_binding(query) do
