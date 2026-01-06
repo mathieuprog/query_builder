@@ -551,6 +551,49 @@ defmodule QueryBuilderTest do
                  end
   end
 
+  test "distinct_roots de-duplicates roots for limit/offset under has_many joins" do
+    user1 = insert(:user, %{name: "User1"})
+    user2 = insert(:user, %{name: "User2"})
+
+    _ = insert_list(3, :article, author: user1, publisher: user1)
+    _ = insert(:article, author: user2, publisher: user2)
+
+    base_query =
+      User
+      |> QueryBuilder.where({:id, :in, [user1.id, user2.id]})
+      |> QueryBuilder.left_join(:authored_articles)
+      |> QueryBuilder.order_by(asc: :id)
+      |> QueryBuilder.order_by(:authored_articles, asc: :id@authored_articles)
+
+    page1 =
+      base_query
+      |> QueryBuilder.from_opts(limit: 1, offset: 0)
+      |> Repo.all()
+
+    page2 =
+      base_query
+      |> QueryBuilder.from_opts(limit: 1, offset: 1)
+      |> Repo.all()
+
+    assert Enum.map(page1, & &1.id) == [user1.id]
+    assert Enum.map(page2, & &1.id) == [user1.id]
+
+    distinct_page1 =
+      base_query
+      |> QueryBuilder.distinct_roots()
+      |> QueryBuilder.from_opts(limit: 1, offset: 0)
+      |> Repo.all()
+
+    distinct_page2 =
+      base_query
+      |> QueryBuilder.distinct_roots()
+      |> QueryBuilder.from_opts(limit: 1, offset: 1)
+      |> Repo.all()
+
+    assert Enum.map(distinct_page1, & &1.id) == [user1.id]
+    assert Enum.map(distinct_page2, & &1.id) == [user2.id]
+  end
+
   test "group_by/3 supports association tokens" do
     rows =
       User
