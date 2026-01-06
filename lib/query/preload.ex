@@ -140,9 +140,6 @@ defmodule QueryBuilder.Query.Preload do
   defp do_convert_list_to_nested_keyword_list([]), do: []
   defp do_convert_list_to_nested_keyword_list([e]), do: e
 
-  defp do_convert_list_to_nested_keyword_list([head | [penultimate, last]]),
-    do: [{head, [{penultimate, last}]}]
-
   defp do_convert_list_to_nested_keyword_list([head | tail]),
     do: [{head, do_convert_list_to_nested_keyword_list(tail)}]
 
