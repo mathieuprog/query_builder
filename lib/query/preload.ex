@@ -61,7 +61,10 @@ defmodule QueryBuilder.Query.Preload do
     end)
   end
 
-  defp join_preload?(ecto_query, %{preload_spec: %PreloadSpec{strategy: :through_join}} = assoc_data) do
+  defp join_preload?(
+         ecto_query,
+         %{preload_spec: %PreloadSpec{strategy: :through_join}} = assoc_data
+       ) do
     ensure_effective_joined!(ecto_query, assoc_data)
     true
   end

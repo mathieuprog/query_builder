@@ -1126,6 +1126,26 @@ defmodule QueryBuilderTest do
            |> Repo.one()
   end
 
+  test "left_join join filters support @self field comparisons" do
+    alice = Repo.get!(User, 100)
+    publisher = Repo.get!(User, 300)
+
+    matching_article =
+      insert(:article, %{author: alice, publisher: publisher, title: alice.nickname})
+
+    _other_article =
+      insert(:article, %{author: alice, publisher: publisher, title: alice.nickname <> "x"})
+
+    user =
+      User
+      |> QueryBuilder.where(id: alice.id)
+      |> QueryBuilder.left_join(:authored_articles, title@authored_articles: :nickname@self)
+      |> QueryBuilder.preload_through_join(:authored_articles)
+      |> Repo.one!()
+
+    assert Enum.map(user.authored_articles, & &1.id) == [matching_article.id]
+  end
+
   test "left_join/4 fails fast for nested assoc paths (use left_join_leaf/4 or left_join_path/4)" do
     assert_raise ArgumentError, ~r/left_join_leaf|left_join_path/, fn ->
       User
