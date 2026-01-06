@@ -900,7 +900,7 @@ defmodule QueryBuilderTest do
       articles =
         Article
         |> QueryBuilder.where([comments: :user], name@comments@user: commenter.name)
-        |> QueryBuilder.preload(:comments)
+        |> QueryBuilder.preload_separate(:comments)
         |> Repo.all()
 
       assert Enum.any?(articles, &Ecto.assoc_loaded?(&1.comments))
@@ -1066,7 +1066,7 @@ defmodule QueryBuilderTest do
       User
       |> QueryBuilder.where(name: "Alice")
       |> QueryBuilder.order_by(:authored_articles, asc: :title@authored_articles)
-      |> QueryBuilder.preload(:authored_articles)
+      |> QueryBuilder.preload_through_join(:authored_articles)
       |> Repo.one!()
 
     assert hd(alice.authored_articles).title == "ELIXIR V1.9 RELEASED"
@@ -1075,7 +1075,7 @@ defmodule QueryBuilderTest do
       User
       |> QueryBuilder.where(name: "Alice")
       |> QueryBuilder.order_by(:authored_articles, desc: :title@authored_articles)
-      |> QueryBuilder.preload(:authored_articles)
+      |> QueryBuilder.preload_through_join(:authored_articles)
       |> Repo.one!()
 
     assert hd(alice.authored_articles).title == "MINT, A NEW HTTP CLIENT FOR ELIXIR"
@@ -1510,7 +1510,7 @@ defmodule QueryBuilderTest do
     end
   end
 
-  test "preload does not drop root rows when preloading an optional belongs_to (nullable FK)" do
+  test "preload_separate does not drop root rows when preloading an optional belongs_to (nullable FK)" do
     no_role_user =
       Repo.insert!(%User{
         name: "NoRole",
@@ -1523,14 +1523,14 @@ defmodule QueryBuilderTest do
 
     ecto_query =
       User
-      |> QueryBuilder.preload(:role)
+      |> QueryBuilder.preload_separate(:role)
       |> Ecto.Queryable.to_query()
 
     assert [] == ecto_query.joins
 
     users =
       User
-      |> QueryBuilder.preload(:role)
+      |> QueryBuilder.preload_separate(:role)
       |> Repo.all()
 
     no_role_user = Enum.find(users, &(&1.name == "NoRole"))
@@ -1735,7 +1735,7 @@ defmodule QueryBuilderTest do
       pagination: %{cursor_for_entries_after: cursor}
     } =
       User
-      |> QueryBuilder.preload(:role)
+      |> QueryBuilder.preload_through_join(:role)
       |> QueryBuilder.order_by(:role, asc: :name@role)
       |> QueryBuilder.paginate(Repo, page_size: 2, cursor: nil, direction: :after)
 
@@ -1743,7 +1743,7 @@ defmodule QueryBuilderTest do
 
     %{paginated_entries: [first2 | _]} =
       User
-      |> QueryBuilder.preload(:role)
+      |> QueryBuilder.preload_through_join(:role)
       |> QueryBuilder.order_by(:role, asc: :name@role)
       |> QueryBuilder.paginate(Repo, page_size: 2, cursor: cursor, direction: :after)
 
@@ -1781,7 +1781,7 @@ defmodule QueryBuilderTest do
   test "cursor pagination stays single-query when ordering by a to-one association field token and the assoc is preloaded" do
     query =
       User
-      |> QueryBuilder.preload(:role)
+      |> QueryBuilder.preload_through_join(:role)
       |> QueryBuilder.order_by(:role, asc: :name@role)
 
     {_result, query_count} =
@@ -1795,7 +1795,7 @@ defmodule QueryBuilderTest do
   test "cursor pagination does not use the single-query fast path when an @token resolves to a nested association with the same name as a root association" do
     query =
       QueryBuilder.CommentLike
-      |> QueryBuilder.preload(comment: :user)
+      |> QueryBuilder.preload_through_join(comment: :user)
       |> QueryBuilder.order_by([comment: :user], asc: :nickname@user)
 
     {_result, query_count} =
@@ -1809,7 +1809,7 @@ defmodule QueryBuilderTest do
   test "cursor pagination avoids preloading the sentinel row for to-many preloads (uses ids-first)" do
     query =
       User
-      |> QueryBuilder.preload(:authored_articles)
+      |> QueryBuilder.preload_separate(:authored_articles)
       |> QueryBuilder.order_by(asc: :nickname)
 
     {%{paginated_entries: [first]}, queries} =
@@ -1846,7 +1846,7 @@ defmodule QueryBuilderTest do
 
     query =
       User
-      |> QueryBuilder.preload(:authored_articles)
+      |> QueryBuilder.preload_separate(:authored_articles)
       |> QueryBuilder.order_by(asc: &character_length.(:nickname, &1))
 
     {%{paginated_entries: [first]}, queries} =
@@ -1901,7 +1901,7 @@ defmodule QueryBuilderTest do
 
     %{paginated_entries: [with_preload]} =
       base_query
-      |> QueryBuilder.preload(:authored_articles)
+      |> QueryBuilder.preload_separate(:authored_articles)
       |> QueryBuilder.paginate(Repo,
         page_size: 1,
         cursor: nil,
@@ -2252,7 +2252,7 @@ defmodule QueryBuilderTest do
           where: [name: "Alice", nickname: "Alice"],
           where: QueryBuilder.args([role: :permissions], name@permissions: "write"),
           order_by: QueryBuilder.args(:authored_articles, asc: :title@authored_articles),
-          preload: :authored_articles
+          preload_through_join: :authored_articles
         ],
         mode: :full
       )
@@ -2587,7 +2587,7 @@ defmodule QueryBuilderTest do
           where_initcap: CustomQueryBuilder.args(:name, "alice"),
           where: CustomQueryBuilder.args([role: :permissions], name@permissions: "write"),
           order_by: CustomQueryBuilder.args(:authored_articles, asc: :title@authored_articles),
-          preload: :authored_articles
+          preload_through_join: :authored_articles
         ],
         mode: :full
       )
@@ -2646,7 +2646,7 @@ defmodule QueryBuilderTest do
       users =
         User
         |> QueryBuilder.where([authored_articles: :comments], title@comments: "It's great!")
-        |> QueryBuilder.preload(:authored_articles)
+        |> QueryBuilder.preload_separate(:authored_articles)
         |> Repo.all()
 
       assert Enum.any?(users, &Ecto.assoc_loaded?(&1.authored_articles))
@@ -2750,14 +2750,14 @@ defmodule QueryBuilderTest do
       end
     end
 
-    test "preloading joined associations supports chains deeper than 6" do
+    test "separate preloading supports chains deeper than 6" do
       assoc_chain =
         Enum.reduce(:lists.seq(7, 1, -1), nil, fn i, nested ->
           %{
             assoc_binding: String.to_atom("binding_#{i}"),
             assoc_field: String.to_atom("field_#{i}"),
             join_spec: QueryBuilder.AssocList.JoinSpec.new(true, :any, [], true),
-            preload_spec: QueryBuilder.AssocList.PreloadSpec.new(:auto),
+            preload_spec: QueryBuilder.AssocList.PreloadSpec.new(:separate),
             nested_assocs: if(nested, do: [nested], else: [])
           }
         end)
@@ -2781,7 +2781,7 @@ defmodule QueryBuilderTest do
   end
 
   describe "real-world regression patterns" do
-    test "preload does not drop roots for nullable belongs_to associations" do
+    test "preload_separate does not drop roots for nullable belongs_to associations" do
       user_without_role =
         insert(:user, %{
           name: "NoRoleUser",
@@ -2794,7 +2794,7 @@ defmodule QueryBuilderTest do
       loaded =
         User
         |> QueryBuilder.where(id: user_without_role.id)
-        |> QueryBuilder.preload(:role)
+        |> QueryBuilder.preload_separate(:role)
         |> Repo.one!()
 
       assert loaded.id == user_without_role.id
@@ -2802,7 +2802,7 @@ defmodule QueryBuilderTest do
       assert Ecto.assoc_loaded?(loaded.role)
     end
 
-    test "preload does not drop roots for nullable has_one associations" do
+    test "preload_separate does not drop roots for nullable has_one associations" do
       user_without_setting =
         insert(:user, %{
           name: "NoSettingUser",
@@ -2813,7 +2813,7 @@ defmodule QueryBuilderTest do
       loaded =
         User
         |> QueryBuilder.where(id: user_without_setting.id)
-        |> QueryBuilder.preload(:setting)
+        |> QueryBuilder.preload_separate(:setting)
         |> Repo.one!()
 
       assert loaded.id == user_without_setting.id
@@ -2834,7 +2834,7 @@ defmodule QueryBuilderTest do
       events =
         Event
         |> QueryBuilder.order_by(asc: :id)
-        |> QueryBuilder.preload([:article, :comment])
+        |> QueryBuilder.preload_separate([:article, :comment])
         |> Repo.all()
 
       assert Enum.map(events, & &1.id) == [article_event.id, comment_event.id]

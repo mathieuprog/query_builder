@@ -834,44 +834,6 @@ defmodule QueryBuilder do
   end
 
   @doc ~S"""
-  Preloads the associations.
-
-  Preload is hydration-only: it does not introduce joins by itself.
-
-  By default, QueryBuilder will join-preload associations that are already joined
-  (because you filtered/sorted/joined through them), so join filters remain effective.
-  Associations that are not joined are preloaded with separate queries (Ecto's default).
-
-  If you want explicit strategies, use:
-  - `preload_separate/2` to always query-preload
-  - `preload_through_join/2` to require join-preload
-
-  Example:
-  ```
-  QueryBuilder.preload(query, [role: :permissions, articles: [:stars, comments: :user]])
-  ```
-  """
-  def preload(%QueryBuilder.Query{} = query, assoc_fields) do
-    %{
-      query
-      | operations: [
-          %{
-            type: :preload,
-            assocs: assoc_fields,
-            preload_spec: QueryBuilder.AssocList.PreloadSpec.new(:auto),
-            args: []
-          }
-          | query.operations
-        ]
-    }
-  end
-
-  def preload(ecto_query, assoc_fields) do
-    ecto_query = ensure_query_has_binding(ecto_query)
-    preload(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields)
-  end
-
-  @doc ~S"""
   Preloads associations using *separate* queries (Ecto's default preload behavior).
 
   This always performs query-preload, even if the association is joined in SQL.
@@ -1985,7 +1947,7 @@ defmodule QueryBuilder do
   # full (trusted internal usage)
   QueryBuilder.from_opts(query, [
     where: QueryBuilder.args(:role, [name@role: "admin"]),
-    preload: :role
+    preload_separate: :role
   ], mode: :full)
   ```
   """
@@ -2011,8 +1973,8 @@ defmodule QueryBuilder do
     :maybe_where,
     :offset,
     :order_by,
-    :preload,
     :preload_separate,
+    :preload_separate_scoped,
     :preload_through_join,
     :select,
     :select_merge,

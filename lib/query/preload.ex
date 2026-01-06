@@ -61,22 +61,12 @@ defmodule QueryBuilder.Query.Preload do
     end)
   end
 
-  defp join_preload?(ecto_query, assoc_data) do
-    case Map.get(assoc_data, :preload_spec) do
-      %PreloadSpec{strategy: :through_join} ->
-        ensure_effective_joined!(ecto_query, assoc_data)
-        true
-
-      %PreloadSpec{strategy: :separate} ->
-        false
-
-      %PreloadSpec{strategy: :auto} ->
-        effective_joined?(ecto_query, assoc_data)
-
-      nil ->
-        false
-    end
+  defp join_preload?(ecto_query, %{preload_spec: %PreloadSpec{strategy: :through_join}} = assoc_data) do
+    ensure_effective_joined!(ecto_query, assoc_data)
+    true
   end
+
+  defp join_preload?(_ecto_query, _assoc_data), do: false
 
   defp preload_through_join?(%{preload_spec: %PreloadSpec{strategy: :through_join}}), do: true
   defp preload_through_join?(_assoc_data), do: false

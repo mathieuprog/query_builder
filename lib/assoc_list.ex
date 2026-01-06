@@ -15,17 +15,17 @@ defmodule QueryBuilder.AssocList do
   defmodule PreloadSpec do
     @moduledoc false
 
-    @type strategy :: :auto | :separate | :through_join
+    @type strategy :: :separate | :through_join
     @type t :: %__MODULE__{strategy: strategy(), query_opts: keyword() | nil}
 
     @enforce_keys [:strategy]
-    defstruct strategy: :auto,
+    defstruct strategy: :separate,
               query_opts: nil
 
     @spec new(strategy(), keyword() | nil) :: t()
-    def new(strategy \\ :auto, query_opts \\ nil)
+    def new(strategy \\ :separate, query_opts \\ nil)
 
-    def new(strategy, query_opts) when strategy in [:auto, :separate, :through_join] do
+    def new(strategy, query_opts) when strategy in [:separate, :through_join] do
       if query_opts != nil and not Keyword.keyword?(query_opts) do
         raise ArgumentError,
               "invalid preload query opts; expected a keyword list or nil, got: #{inspect(query_opts)}"
@@ -42,7 +42,7 @@ defmodule QueryBuilder.AssocList do
 
     def new(strategy, query_opts) do
       raise ArgumentError,
-            "invalid preload spec; expected strategy to be :auto, :separate, or :through_join, " <>
+            "invalid preload spec; expected strategy to be :separate or :through_join, " <>
               "got: #{inspect(strategy)} with query opts #{inspect(query_opts)}"
     end
 
@@ -61,12 +61,6 @@ defmodule QueryBuilder.AssocList do
                 "cannot combine a scoped separate preload with `preload_through_join`"
       end
 
-      if query_opts != nil and strategy != :separate do
-        raise ArgumentError,
-              "invalid preload spec merge for #{inspect(source_schema)}.#{inspect(assoc_field)}: " <>
-                "scoped preload queries require separate preload"
-      end
-
       %__MODULE__{strategy: strategy, query_opts: query_opts}
     end
 
@@ -74,7 +68,6 @@ defmodule QueryBuilder.AssocList do
     defp merge_strategy!(_other, :through_join), do: :through_join
     defp merge_strategy!(:separate, _other), do: :separate
     defp merge_strategy!(_other, :separate), do: :separate
-    defp merge_strategy!(:auto, :auto), do: :auto
 
     defp merge_query_opts!(a, b, source_schema, assoc_field) do
       case {a, b} do
@@ -247,7 +240,7 @@ defmodule QueryBuilder.AssocList do
     * `:source_binding`: *named binding* of the source schema (atom)
     * `:source_schema`: module name of the source schema (atom)
     * `preload_spec`: `nil` or `%QueryBuilder.AssocList.PreloadSpec{}` representing preload intent and strategy
-      (auto/separate/through-join) and optional scoped separate-preload query options (`query_opts`)
+      (separate/through-join) and optional scoped separate-preload query options (`query_opts`)
 
   This information allows the exposed functions such as `QueryBuilder.where/3` to join
   associations, refer to associations, etc.

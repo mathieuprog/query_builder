@@ -95,7 +95,6 @@ defmodule QueryBuilder.Extension do
       defdelegate having_any(query, assoc_fields, or_groups), to: QueryBuilder
       defdelegate order_by(query, value), to: QueryBuilder
       defdelegate order_by(query, assoc_fields, value), to: QueryBuilder
-      defdelegate preload(query, assoc_fields), to: QueryBuilder
       defdelegate preload_separate(query, assoc_fields), to: QueryBuilder
       defdelegate preload_separate_scoped(query, assoc_field, opts \\ []), to: QueryBuilder
       defdelegate preload_through_join(query, assoc_fields), to: QueryBuilder

@@ -51,7 +51,7 @@ defmodule QueryBuilder.FromOptsBoundaryTest do
 
     test "rejects preloads at the boundary" do
       assert_raise ArgumentError, ~r/mode: :boundary.*preload|preload.*mode: :boundary/i, fn ->
-        QueryBuilder.from_opts(User, preload: :role)
+        QueryBuilder.from_opts(User, preload_separate: :role)
       end
     end
 
