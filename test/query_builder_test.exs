@@ -523,6 +523,34 @@ defmodule QueryBuilderTest do
     assert nickname_pos < email_pos
   end
 
+  test "distinct_roots uses DISTINCT ON (root primary key) on Postgres" do
+    query =
+      User
+      |> QueryBuilder.left_join(:authored_articles)
+      |> QueryBuilder.order_by(asc: :id)
+      |> QueryBuilder.order_by(:authored_articles, asc: :id@authored_articles)
+      |> QueryBuilder.distinct_roots()
+
+    {sql, _params} = Ecto.Adapters.SQL.to_sql(:all, Repo, query)
+
+    assert sql =~ "DISTINCT ON"
+
+    assert [_full, root_binding] = Regex.run(~r/FROM \"users\" AS (\w+)/, sql)
+    assert sql =~ "DISTINCT ON (#{root_binding}.\"id\")"
+  end
+
+  test "distinct_roots rejects to-many join-preloads (it would drop association rows)" do
+    assert_raise ArgumentError,
+                 ~r/distinct_roots\/1 cannot be combined with `preload_through_join`/i,
+                 fn ->
+                   User
+                   |> QueryBuilder.left_join(:authored_articles)
+                   |> QueryBuilder.preload_through_join(:authored_articles)
+                   |> QueryBuilder.distinct_roots()
+                   |> Repo.all()
+                 end
+  end
+
   test "group_by/3 supports association tokens" do
     rows =
       User

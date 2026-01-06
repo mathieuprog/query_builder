@@ -100,6 +100,7 @@ defmodule QueryBuilder.Extension do
       defdelegate paginate(query, repo, opts \\ []), to: QueryBuilder
       defdelegate distinct(query, value), to: QueryBuilder
       defdelegate distinct(query, assoc_fields, value), to: QueryBuilder
+      defdelegate distinct_roots(query, enabled \\ true), to: QueryBuilder
       defdelegate group_by(query, expr), to: QueryBuilder
       defdelegate group_by(query, assoc_fields, expr), to: QueryBuilder
       defdelegate having(query, filters), to: QueryBuilder

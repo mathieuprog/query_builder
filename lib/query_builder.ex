@@ -1608,6 +1608,49 @@ defmodule QueryBuilder do
   end
 
   @doc ~S"""
+  Ensures the query returns unique root rows (dedupe by root primary key).
+
+  This is primarily useful when you must join a to-many association (e.g. for
+  filtering/order_by) but still want a unique list of root structs.
+
+  On Postgres, this uses `DISTINCT ON (root_pk...)` (via Ecto distinct
+  expressions). In join-multiplying queries, `order_by` determines which joined
+  row “wins” for each root.
+
+  Notes:
+  - Requires the root schema to have a primary key.
+  - Requires a database that supports `DISTINCT ON` (Postgres). MySQL does not;
+    on MySQL, Ecto will raise if you attempt to use `distinct_roots/1`.
+  - Cannot be combined with `preload_through_join` on to-many associations (it
+    would drop association rows).
+  """
+  def distinct_roots(query, enabled \\ true)
+
+  def distinct_roots(%QueryBuilder.Query{} = query, true) do
+    %{
+      query
+      | operations: [%{type: :distinct_roots, assocs: [], args: []} | query.operations]
+    }
+  end
+
+  def distinct_roots(%QueryBuilder.Query{} = query, false), do: query
+  def distinct_roots(%QueryBuilder.Query{} = query, []), do: query
+
+  def distinct_roots(%QueryBuilder.Query{}, nil) do
+    raise ArgumentError, "distinct_roots/2 does not accept nil; omit the call or pass true/false"
+  end
+
+  def distinct_roots(%QueryBuilder.Query{}, enabled) do
+    raise ArgumentError,
+          "distinct_roots/2 expects a boolean (or [] as a no-op), got: #{inspect(enabled)}"
+  end
+
+  def distinct_roots(ecto_query, enabled) do
+    ecto_query = ensure_query_has_binding(ecto_query)
+    distinct_roots(%QueryBuilder.Query{ecto_query: ecto_query}, enabled)
+  end
+
+  @doc ~S"""
   A group by query expression.
 
   Example:
@@ -2058,6 +2101,7 @@ defmodule QueryBuilder do
 
   @from_opts_supported_operations_full [
     :distinct,
+    :distinct_roots,
     :group_by,
     :having,
     :having_any,
