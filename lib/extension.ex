@@ -101,6 +101,10 @@ defmodule QueryBuilder.Extension do
       defdelegate distinct(query, value), to: QueryBuilder
       defdelegate distinct(query, assoc_fields, value), to: QueryBuilder
       defdelegate distinct_roots(query, enabled \\ true), to: QueryBuilder
+      defdelegate top_n_per(query, opts), to: QueryBuilder
+      defdelegate top_n_per(query, assoc_fields, opts), to: QueryBuilder
+      defdelegate first_per(query, opts), to: QueryBuilder
+      defdelegate first_per(query, assoc_fields, opts), to: QueryBuilder
       defdelegate group_by(query, expr), to: QueryBuilder
       defdelegate group_by(query, assoc_fields, expr), to: QueryBuilder
       defdelegate having(query, filters), to: QueryBuilder

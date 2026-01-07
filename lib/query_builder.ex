@@ -1903,6 +1903,102 @@ defmodule QueryBuilder do
   end
 
   @doc ~S"""
+  Keeps the top N rows per group (window-function helper).
+
+  This ranks rows with `row_number() OVER (PARTITION BY ... ORDER BY ...)` and
+  filters to `rn <= n`, while returning the original root rows.
+
+  Options:
+  - `:partition_by` (required) - a token or list of tokens/expressions
+  - `:order_by` (required) - a keyword list like `order_by/*`
+  - `:n` (required) - a positive integer
+  - `:prefer_distinct_on?` (optional) - when `n: 1` and the query has no `distinct`, prefer Postgres `DISTINCT ON` instead of window functions
+
+  Notes:
+  - Requires the root schema to have a primary key (used to join back to the root rows).
+  - `order_by` must include the root primary key fields as a tie-breaker.
+
+  Examples:
+  ```elixir
+  # latest order per user
+  Order
+  |> QueryBuilder.top_n_per(partition_by: [:user_id], order_by: [desc: :created_at, desc: :id], n: 1)
+  |> Repo.all()
+  ```
+  """
+  def top_n_per(query, opts) do
+    top_n_per(query, [], opts)
+  end
+
+  def top_n_per(query, assoc_fields, opts)
+
+  def top_n_per(%QueryBuilder.Query{}, _assoc_fields, nil) do
+    raise ArgumentError,
+          "top_n_per/2 and top_n_per/3 expect `opts` to be a keyword list, got: nil"
+  end
+
+  def top_n_per(%QueryBuilder.Query{} = query, assoc_fields, opts) when is_list(opts) do
+    %{
+      query
+      | operations: [%{type: :top_n_per, assocs: assoc_fields, args: [opts]} | query.operations]
+    }
+  end
+
+  def top_n_per(%QueryBuilder.Query{}, _assoc_fields, opts) do
+    raise ArgumentError,
+          "top_n_per/2 and top_n_per/3 expect `opts` to be a keyword list, got: #{inspect(opts)}"
+  end
+
+  def top_n_per(ecto_query, assoc_fields, opts) do
+    ecto_query = ensure_query_has_binding(ecto_query)
+    top_n_per(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields, opts)
+  end
+
+  @doc ~S"""
+  A shorthand for `top_n_per/2` with `n: 1`.
+
+  Accepts the same options as `top_n_per/2` (except `:n` is fixed to 1), including
+  `prefer_distinct_on?: true` on Postgres (best-effort fast-path).
+
+  Example:
+  ```elixir
+  # one latest post per subreddit
+  Post
+  |> QueryBuilder.first_per(partition_by: [:subreddit_id], order_by: [desc: :score, desc: :id])
+  |> Repo.all()
+  ```
+  """
+  def first_per(query, opts) do
+    first_per(query, [], opts)
+  end
+
+  def first_per(query, assoc_fields, opts)
+
+  def first_per(_query, _assoc_fields, nil) do
+    raise ArgumentError,
+          "first_per/2 and first_per/3 expect `opts` to be a keyword list, got: nil"
+  end
+
+  def first_per(query, assoc_fields, opts) when is_list(opts) do
+    case Keyword.fetch(opts, :n) do
+      :error ->
+        top_n_per(query, assoc_fields, Keyword.put(opts, :n, 1))
+
+      {:ok, 1} ->
+        top_n_per(query, assoc_fields, opts)
+
+      {:ok, other} ->
+        raise ArgumentError,
+              "first_per/2 is `top_n_per/2` with `n: 1`; got n: #{inspect(other)}"
+    end
+  end
+
+  def first_per(_query, _assoc_fields, opts) do
+    raise ArgumentError,
+          "first_per/2 and first_per/3 expect `opts` to be a keyword list, got: #{inspect(opts)}"
+  end
+
+  @doc ~S"""
   An inner join query expression.
 
   This emits `INNER JOIN`s for the given association path. It is “just join”: it does
@@ -2105,6 +2201,7 @@ defmodule QueryBuilder do
     :group_by,
     :having,
     :having_any,
+    :first_per,
     :inner_join,
     :left_join,
     :left_join_leaf,
@@ -2119,6 +2216,7 @@ defmodule QueryBuilder do
     :preload_through_join,
     :select,
     :select_merge,
+    :top_n_per,
     :where,
     :where_any,
     :where_has,
