@@ -1229,6 +1229,163 @@ defmodule QueryBuilder do
     do: %QueryBuilder.Aggregate{op: :max, arg: token, modifier: nil}
 
   @doc ~S"""
+  Aggregate helper: `array_agg` (Postgres-only).
+
+  This returns an aggregate expression that can be used in `select/*`, `order_by/*`,
+  and `having/*` (typically with `group_by/*`).
+
+  Options:
+  - `:distinct?` (optional) - boolean (default: `false`)
+  - `:order_by` (optional) - a keyword list like `order_by/*` (default: `[]`).
+    When `distinct?: true`, `order_by` is restricted to ordering by the aggregated token
+    itself (Postgres restriction for `DISTINCT` aggregates).
+    Supports up to 5 order terms.
+  - `:filter` (optional) - a filter DSL value (like `where/*`), an Ecto dynamic, or a 1-arity
+    function that returns a dynamic. This is compiled into `FILTER (WHERE ...)` (Postgres).
+    The DSL form is AND-only; for OR logic, use a dynamic/function.
+
+  Examples:
+
+  ```elixir
+  Article
+  |> QueryBuilder.group_by(:author_id)
+  |> QueryBuilder.select(%{
+    author_id: :author_id,
+    publisher_ids: QueryBuilder.array_agg(:publisher_id, distinct?: true, order_by: [asc: :publisher_id])
+  })
+  |> Repo.all()
+  ```
+  """
+  def array_agg(token, opts \\ [])
+
+  def array_agg(token, opts) when (is_atom(token) or is_binary(token)) and is_list(opts) do
+    validate_array_agg_opts!(token, opts)
+
+    distinct? = Keyword.get(opts, :distinct?, false)
+    order_by = Keyword.get(opts, :order_by, [])
+    filter = Keyword.get(opts, :filter, nil)
+
+    modifier = if distinct?, do: :distinct, else: nil
+
+    %QueryBuilder.Aggregate{
+      op: :array_agg,
+      arg: token,
+      modifier: modifier,
+      order_by: order_by,
+      filter: filter
+    }
+  end
+
+  def array_agg(token, opts) do
+    raise ArgumentError,
+          "array_agg/2 expects a token (atom/string) and a keyword list, got: " <>
+            "#{inspect(token)}, #{inspect(opts)}"
+  end
+
+  defp validate_array_agg_opts!(token, opts) do
+    unless Keyword.keyword?(opts) do
+      raise ArgumentError,
+            "array_agg/2 expects `opts` to be a keyword list, got: #{inspect(opts)}"
+    end
+
+    allowed_keys = [:distinct?, :order_by, :filter]
+    unknown_keys = opts |> Keyword.keys() |> Enum.uniq() |> Kernel.--(allowed_keys)
+
+    if unknown_keys != [] do
+      raise ArgumentError,
+            "array_agg/2 got unknown options: #{inspect(unknown_keys)} (supported: #{inspect(allowed_keys)})"
+    end
+
+    distinct? = Keyword.get(opts, :distinct?, false)
+
+    unless is_boolean(distinct?) do
+      raise ArgumentError,
+            "array_agg/2 expects `:distinct?` to be a boolean, got: #{inspect(distinct?)}"
+    end
+
+    order_by = Keyword.get(opts, :order_by, [])
+
+    if is_nil(order_by) do
+      raise ArgumentError,
+            "array_agg/2 expects `:order_by` to be a keyword list (or list of order expressions), got nil"
+    end
+
+    if order_by != [] and not (is_list(order_by) and Keyword.keyword?(order_by)) do
+      raise ArgumentError,
+            "array_agg/2 expects `:order_by` to be a keyword list (or list of order expressions), got: #{inspect(order_by)}"
+    end
+
+    if length(order_by) > 5 do
+      raise ArgumentError,
+            "array_agg/2 supports up to 5 order_by terms, got: #{inspect(length(order_by))}"
+    end
+
+    Enum.each(List.wrap(order_by), fn
+      {direction, expr} when is_atom(direction) ->
+        if distinct? and
+             not ((is_atom(expr) or is_binary(expr)) and to_string(expr) == to_string(token)) do
+          raise ArgumentError,
+                "array_agg/2 with `distinct?: true` requires `order_by` expressions to match the aggregated token " <>
+                  "(Postgres restriction for DISTINCT aggregates); got: #{inspect(expr)} (expected: #{inspect(token)})"
+        end
+
+        :ok
+
+      other ->
+        raise ArgumentError,
+              "array_agg/2 expects `:order_by` entries to look like `{direction, expr}`, got: #{inspect(other)}"
+    end)
+
+    filter = Keyword.get(opts, :filter, nil)
+    validate_array_agg_filter_opt!(filter)
+
+    :ok
+  end
+
+  defp validate_array_agg_filter_opt!(nil), do: :ok
+  defp validate_array_agg_filter_opt!([]), do: :ok
+
+  defp validate_array_agg_filter_opt!(%Ecto.Query.DynamicExpr{}), do: :ok
+
+  defp validate_array_agg_filter_opt!(fun) when is_function(fun, 1), do: :ok
+
+  defp validate_array_agg_filter_opt!(filters) when is_list(filters) do
+    if Keyword.keyword?(filters) and Keyword.has_key?(filters, :or) do
+      raise ArgumentError,
+            "array_agg/2 filter DSL is AND-only (does not support `or:` groups); " <>
+              "use `filter: dynamic(...)` or `filter: fn resolve -> ... end` for OR logic"
+    end
+
+    Enum.each(filters, fn
+      {:or, _} ->
+        raise ArgumentError,
+              "array_agg/2 filter DSL is AND-only (does not support `{:or, ...}` groups); " <>
+                "use `filter: dynamic(...)` or `filter: fn resolve -> ... end` for OR logic"
+
+      _ ->
+        :ok
+    end)
+
+    :ok
+  end
+
+  defp validate_array_agg_filter_opt!(filter) when is_tuple(filter) do
+    if tuple_size(filter) > 0 and elem(filter, 0) == :or do
+      raise ArgumentError,
+            "array_agg/2 filter DSL is AND-only (does not support `{:or, ...}` groups); " <>
+              "use `filter: dynamic(...)` or `filter: fn resolve -> ... end` for OR logic"
+    end
+
+    :ok
+  end
+
+  defp validate_array_agg_filter_opt!(other) do
+    raise ArgumentError,
+          "array_agg/2 expects `:filter` to be a keyword list, a list of filters, a filter tuple, a dynamic, or a 1-arity function; " <>
+            "got: #{inspect(other)}"
+  end
+
+  @doc ~S"""
   A shorthand for `where_exists_subquery/3` (“has associated rows”).
 
   It applies a correlated `EXISTS(...)` filter for the given association path.

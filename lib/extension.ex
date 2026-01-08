@@ -131,6 +131,7 @@ defmodule QueryBuilder.Extension do
       defdelegate sum(token), to: QueryBuilder
       defdelegate min(token), to: QueryBuilder
       defdelegate max(token), to: QueryBuilder
+      defdelegate array_agg(token, opts \\ []), to: QueryBuilder
       defdelegate where(query, filters), to: QueryBuilder
       defdelegate where(query, assoc_fields, filters, or_filters \\ []), to: QueryBuilder
       defdelegate where_any(query, or_groups), to: QueryBuilder

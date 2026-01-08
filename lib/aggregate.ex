@@ -4,7 +4,7 @@ defmodule QueryBuilder.Aggregate do
   require Ecto.Query
   import QueryBuilder.Utils
 
-  defstruct [:op, :arg, :modifier]
+  defstruct op: nil, arg: nil, modifier: nil, order_by: nil, filter: nil
 
   def to_dynamic(assoc_list, %__MODULE__{} = aggregate) do
     to_dynamic_with_resolver(aggregate, &find_field_and_binding_from_token(assoc_list, &1))
@@ -50,8 +50,203 @@ defmodule QueryBuilder.Aggregate do
     Ecto.Query.dynamic([{^binding, x}], max(field(x, ^field)))
   end
 
+  defp to_dynamic_with_resolver(
+         %__MODULE__{
+           op: :array_agg,
+           arg: token,
+           modifier: modifier,
+           order_by: order_by,
+           filter: filter
+         },
+         resolve
+       )
+       when is_atom(token) or is_binary(token) do
+    {field, binding} = resolve.(token)
+    value_dynamic = Ecto.Query.dynamic([{^binding, x}], field(x, ^field))
+
+    order_by = List.wrap(order_by)
+    distinct? = modifier == :distinct
+
+    order_terms =
+      Enum.map(order_by, fn {direction, expr} ->
+        expr_dynamic = order_expr_to_dynamic!(expr, resolve)
+        order_term_to_dynamic!(direction, expr_dynamic)
+      end)
+
+    agg_dynamic = array_agg_dynamic!(value_dynamic, order_terms, distinct?)
+
+    filter_dynamic = filter_to_dynamic!(filter, resolve)
+
+    case filter_dynamic do
+      nil ->
+        agg_dynamic
+
+      %Ecto.Query.DynamicExpr{} = filter_dynamic ->
+        Ecto.Query.dynamic([], fragment("? FILTER (WHERE ?)", ^agg_dynamic, ^filter_dynamic))
+    end
+  end
+
   defp to_dynamic_with_resolver(%__MODULE__{} = aggregate, _resolve) do
     raise ArgumentError, "invalid aggregate expression: #{inspect(aggregate)}"
+  end
+
+  defp order_expr_to_dynamic!(%Ecto.Query.DynamicExpr{} = dynamic, _resolve), do: dynamic
+
+  defp order_expr_to_dynamic!(fun, resolve) when is_function(fun, 1) do
+    case fun.(resolve) do
+      %Ecto.Query.DynamicExpr{} = dynamic ->
+        dynamic
+
+      other ->
+        raise ArgumentError,
+              "array_agg/2 expects order_by functions to return an Ecto dynamic expression, got: #{inspect(other)}"
+    end
+  end
+
+  defp order_expr_to_dynamic!(token, resolve) when is_atom(token) or is_binary(token) do
+    {field, binding} = resolve.(token)
+    Ecto.Query.dynamic([{^binding, x}], field(x, ^field))
+  end
+
+  defp order_expr_to_dynamic!(other, _resolve) do
+    raise ArgumentError,
+          "array_agg/2 expects order_by expressions to be tokens (atoms/strings), dynamics, or 1-arity functions; got: #{inspect(other)}"
+  end
+
+  defp order_term_to_dynamic!(direction, %Ecto.Query.DynamicExpr{} = expr_dynamic)
+       when is_atom(direction) do
+    case direction do
+      :asc ->
+        Ecto.Query.dynamic([], fragment("? ASC", ^expr_dynamic))
+
+      :desc ->
+        Ecto.Query.dynamic([], fragment("? DESC", ^expr_dynamic))
+
+      :asc_nulls_first ->
+        Ecto.Query.dynamic([], fragment("? ASC NULLS FIRST", ^expr_dynamic))
+
+      :asc_nulls_last ->
+        Ecto.Query.dynamic([], fragment("? ASC NULLS LAST", ^expr_dynamic))
+
+      :desc_nulls_first ->
+        Ecto.Query.dynamic([], fragment("? DESC NULLS FIRST", ^expr_dynamic))
+
+      :desc_nulls_last ->
+        Ecto.Query.dynamic([], fragment("? DESC NULLS LAST", ^expr_dynamic))
+
+      other ->
+        raise ArgumentError, "unsupported order_by direction for array_agg/2: #{inspect(other)}"
+    end
+  end
+
+  defp order_term_to_dynamic!(direction, _expr_dynamic) do
+    raise ArgumentError,
+          "array_agg/2 expects order_by directions to be atoms, got: #{inspect(direction)}"
+  end
+
+  defp filter_to_dynamic!(nil, _resolve), do: nil
+  defp filter_to_dynamic!([], _resolve), do: nil
+
+  defp filter_to_dynamic!(%Ecto.Query.DynamicExpr{} = dynamic, _resolve), do: dynamic
+
+  defp filter_to_dynamic!(fun, resolve) when is_function(fun, 1) do
+    case fun.(resolve) do
+      %Ecto.Query.DynamicExpr{} = dynamic ->
+        dynamic
+
+      other ->
+        raise ArgumentError,
+              "array_agg/2 expects filter functions to return an Ecto dynamic expression, got: #{inspect(other)}"
+    end
+  end
+
+  defp filter_to_dynamic!(filters, resolve) when is_list(filters) or is_tuple(filters) do
+    QueryBuilder.Query.Where.build_dynamic_query_with_resolver(nil, filters, [], resolve)
+  end
+
+  defp filter_to_dynamic!(other, _resolve) do
+    raise ArgumentError,
+          "array_agg/2 expects filter to be a keyword list, a list of filters, a filter tuple, a dynamic, or a 1-arity function; got: #{inspect(other)}"
+  end
+
+  defp array_agg_dynamic!(value_dynamic, order_terms, distinct?) do
+    case {distinct?, order_terms} do
+      {false, []} ->
+        Ecto.Query.dynamic([], fragment("array_agg(?)", ^value_dynamic))
+
+      {true, []} ->
+        Ecto.Query.dynamic([], fragment("array_agg(DISTINCT ?)", ^value_dynamic))
+
+      {false, [t1]} ->
+        Ecto.Query.dynamic([], fragment("array_agg(? ORDER BY ?)", ^value_dynamic, ^t1))
+
+      {true, [t1]} ->
+        Ecto.Query.dynamic([], fragment("array_agg(DISTINCT ? ORDER BY ?)", ^value_dynamic, ^t1))
+
+      {false, [t1, t2]} ->
+        Ecto.Query.dynamic([], fragment("array_agg(? ORDER BY ?, ?)", ^value_dynamic, ^t1, ^t2))
+
+      {true, [t1, t2]} ->
+        Ecto.Query.dynamic(
+          [],
+          fragment("array_agg(DISTINCT ? ORDER BY ?, ?)", ^value_dynamic, ^t1, ^t2)
+        )
+
+      {false, [t1, t2, t3]} ->
+        Ecto.Query.dynamic(
+          [],
+          fragment("array_agg(? ORDER BY ?, ?, ?)", ^value_dynamic, ^t1, ^t2, ^t3)
+        )
+
+      {true, [t1, t2, t3]} ->
+        Ecto.Query.dynamic(
+          [],
+          fragment("array_agg(DISTINCT ? ORDER BY ?, ?, ?)", ^value_dynamic, ^t1, ^t2, ^t3)
+        )
+
+      {false, [t1, t2, t3, t4]} ->
+        Ecto.Query.dynamic(
+          [],
+          fragment("array_agg(? ORDER BY ?, ?, ?, ?)", ^value_dynamic, ^t1, ^t2, ^t3, ^t4)
+        )
+
+      {true, [t1, t2, t3, t4]} ->
+        Ecto.Query.dynamic(
+          [],
+          fragment(
+            "array_agg(DISTINCT ? ORDER BY ?, ?, ?, ?)",
+            ^value_dynamic,
+            ^t1,
+            ^t2,
+            ^t3,
+            ^t4
+          )
+        )
+
+      {false, [t1, t2, t3, t4, t5]} ->
+        Ecto.Query.dynamic(
+          [],
+          fragment("array_agg(? ORDER BY ?, ?, ?, ?, ?)", ^value_dynamic, ^t1, ^t2, ^t3, ^t4, ^t5)
+        )
+
+      {true, [t1, t2, t3, t4, t5]} ->
+        Ecto.Query.dynamic(
+          [],
+          fragment(
+            "array_agg(DISTINCT ? ORDER BY ?, ?, ?, ?, ?)",
+            ^value_dynamic,
+            ^t1,
+            ^t2,
+            ^t3,
+            ^t4,
+            ^t5
+          )
+        )
+
+      {_distinct?, order_terms} ->
+        raise ArgumentError,
+              "array_agg/2 supports up to 5 order_by terms, got: #{inspect(length(order_terms))}"
+    end
   end
 
   def comparison_fun(%__MODULE__{} = aggregate, operator, value, operator_opts \\ []) do

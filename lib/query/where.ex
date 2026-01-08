@@ -13,11 +13,17 @@ defmodule QueryBuilder.Query.Where do
   end
 
   def build_dynamic_query(ecto_query, assoc_list, filters, or_filters) do
+    resolve = &find_field_and_binding_from_token(assoc_list, &1)
+    build_dynamic_query_with_resolver(ecto_query, filters, or_filters, resolve)
+  end
+
+  def build_dynamic_query_with_resolver(ecto_query, filters, or_filters, resolve)
+      when is_function(resolve, 1) do
     [filters | Keyword.get_values(or_filters, :or)]
     |> Enum.reduce(nil, fn filters, or_acc ->
       filters
       |> List.wrap()
-      |> build_dynamic_group(ecto_query, assoc_list)
+      |> build_dynamic_group_with_resolver(ecto_query, resolve)
       |> maybe_or_dynamic(or_acc)
     end)
     |> case do
@@ -26,13 +32,13 @@ defmodule QueryBuilder.Query.Where do
     end
   end
 
-  defp build_dynamic_group([], _ecto_query, _assoc_list), do: nil
+  defp build_dynamic_group_with_resolver([], _ecto_query, _resolve), do: nil
 
-  defp build_dynamic_group([filter | tail], ecto_query, assoc_list) do
-    first = apply_filter(ecto_query, assoc_list, filter)
+  defp build_dynamic_group_with_resolver([filter | tail], ecto_query, resolve) do
+    first = apply_filter_with_resolver(ecto_query, resolve, filter)
 
     Enum.reduce(tail, first, fn filter, and_acc ->
-      filter_dynamic = apply_filter(ecto_query, assoc_list, filter)
+      filter_dynamic = apply_filter_with_resolver(ecto_query, resolve, filter)
       Ecto.Query.dynamic(^and_acc and ^filter_dynamic)
     end)
   end
@@ -45,21 +51,25 @@ defmodule QueryBuilder.Query.Where do
     Ecto.Query.dynamic(^acc or ^dynamic)
   end
 
-  defp apply_filter(_query, _assoc_list, %QueryBuilder.Aggregate{} = aggregate) do
+  defp apply_filter_with_resolver(_query, _resolve, %QueryBuilder.Aggregate{} = aggregate) do
     raise ArgumentError,
           "invalid where filter: aggregate expression #{inspect(aggregate)} cannot be used in WHERE; " <>
             "use HAVING (QueryBuilder.having/*) after GROUP BY (QueryBuilder.group_by/*) instead"
   end
 
-  defp apply_filter(_query, _assoc_list, {%QueryBuilder.Aggregate{} = aggregate, _value}) do
-    raise ArgumentError,
-          "invalid where filter: aggregate expression #{inspect(aggregate)} cannot be used in WHERE; " <>
-            "use HAVING (QueryBuilder.having/*) after GROUP BY (QueryBuilder.group_by/*) instead"
-  end
-
-  defp apply_filter(
+  defp apply_filter_with_resolver(
          _query,
-         _assoc_list,
+         _resolve,
+         {%QueryBuilder.Aggregate{} = aggregate, _value}
+       ) do
+    raise ArgumentError,
+          "invalid where filter: aggregate expression #{inspect(aggregate)} cannot be used in WHERE; " <>
+            "use HAVING (QueryBuilder.having/*) after GROUP BY (QueryBuilder.group_by/*) instead"
+  end
+
+  defp apply_filter_with_resolver(
+         _query,
+         _resolve,
          {%QueryBuilder.Aggregate{} = aggregate, _operator, _value}
        ) do
     raise ArgumentError,
@@ -67,9 +77,9 @@ defmodule QueryBuilder.Query.Where do
             "use HAVING (QueryBuilder.having/*) after GROUP BY (QueryBuilder.group_by/*) instead"
   end
 
-  defp apply_filter(
+  defp apply_filter_with_resolver(
          _query,
-         _assoc_list,
+         _resolve,
          {%QueryBuilder.Aggregate{} = aggregate, _operator, _value, _operator_opts}
        ) do
     raise ArgumentError,
@@ -77,21 +87,21 @@ defmodule QueryBuilder.Query.Where do
             "use HAVING (QueryBuilder.having/*) after GROUP BY (QueryBuilder.group_by/*) instead"
   end
 
-  defp apply_filter(query, assoc_list, {field, value}) do
-    apply_filter(query, assoc_list, {field, :eq, value, []})
+  defp apply_filter_with_resolver(query, resolve, {field, value}) do
+    apply_filter_with_resolver(query, resolve, {field, :eq, value, []})
   end
 
-  defp apply_filter(query, assoc_list, {field, operator, value}) do
-    apply_filter(query, assoc_list, {field, operator, value, []})
+  defp apply_filter_with_resolver(query, resolve, {field, operator, value}) do
+    apply_filter_with_resolver(query, resolve, {field, operator, value, []})
   end
 
-  defp apply_filter(query, assoc_list, {field, operator, value, operator_opts})
+  defp apply_filter_with_resolver(query, resolve, {field, operator, value, operator_opts})
        when is_atom(value) do
-    {field, binding_field1} = find_field_and_binding_from_token(assoc_list, field)
+    {field, binding_field1} = resolve.(field)
 
     if value_is_field(value) do
       field2 = referenced_field_in_value(value)
-      {field2, binding_field2} = find_field_and_binding_from_token(assoc_list, field2)
+      {field2, binding_field2} = resolve.(field2)
 
       do_where(
         query,
@@ -104,14 +114,21 @@ defmodule QueryBuilder.Query.Where do
     end
   end
 
-  defp apply_filter(query, assoc_list, {field, operator, value, operator_opts}) do
-    {field, binding} = find_field_and_binding_from_token(assoc_list, field)
+  defp apply_filter_with_resolver(query, resolve, {field, operator, value, operator_opts}) do
+    {field, binding} = resolve.(field)
 
     do_where(query, binding, {field, operator, value, operator_opts})
   end
 
-  defp apply_filter(_query, assoc_list, custom_fun) when is_function(custom_fun) do
-    custom_fun.(&find_field_and_binding_from_token(assoc_list, &1))
+  defp apply_filter_with_resolver(_query, resolve, custom_fun) when is_function(custom_fun, 1) do
+    custom_fun.(resolve)
+  end
+
+  defp apply_filter_with_resolver(_query, _resolve, other) do
+    raise ArgumentError,
+          "got an invalid filter entry: #{inspect(other)}. " <>
+            "Expected `{field, value}`, `{field, operator, value}`, `{field, operator, value, operator_opts}`, " <>
+            "or a 1-arity function."
   end
 
   defp do_where(_query, binding, {field, :in, values, []}) when is_list(values) do
