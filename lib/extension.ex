@@ -7,6 +7,7 @@ defmodule QueryBuilder.Extension do
   ```
   defmodule MyApp.QueryBuilder do
     use QueryBuilder.Extension, from_opts_full_ops: [:where_initcap]
+    import Ecto.Query
 
     defmacro __using__(opts) do
       quote do
@@ -21,7 +22,7 @@ defmodule QueryBuilder.Extension do
     def where_initcap(query, field, value) do
       text_equals_condition = fn field, value, get_binding_fun ->
         {field, binding} = get_binding_fun.(field)
-        Ecto.Query.dynamic([{^binding, x}], fragment("initcap(?)", ^value) == field(x, ^field))
+        dynamic([{^binding, x}], fragment("initcap(?)", ^value) == field(x, ^field))
       end
 
       query
@@ -79,6 +80,8 @@ defmodule QueryBuilder.Extension do
 
       defdelegate left_join_path(query, assoc_fields, filters \\ [], or_filters \\ []),
         to: QueryBuilder
+
+      defdelegate left_join_latest(query, assoc_field, opts \\ []), to: QueryBuilder
 
       defdelegate maybe_where(query, bool, filters), to: QueryBuilder
 

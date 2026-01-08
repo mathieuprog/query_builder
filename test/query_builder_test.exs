@@ -594,192 +594,6 @@ defmodule QueryBuilderTest do
     assert Enum.map(distinct_page2, & &1.id) == [user2.id]
   end
 
-  describe "top_n_per/first_per" do
-    test "top_n_per keeps N rows per partition" do
-      author1 = insert(:user, %{name: "Author1"})
-      author2 = insert(:user, %{name: "Author2"})
-
-      a1 = insert(:article, author: author1, publisher: author1)
-      a2 = insert(:article, author: author1, publisher: author1)
-      a3 = insert(:article, author: author1, publisher: author1)
-
-      b1 = insert(:article, author: author2, publisher: author2)
-      b2 = insert(:article, author: author2, publisher: author2)
-
-      results =
-        Article
-        |> QueryBuilder.top_n_per(partition_by: [:author_id], order_by: [desc: :id], n: 2)
-        |> Repo.all()
-
-      by_author = Enum.group_by(results, & &1.author_id)
-
-      expected_author1_ids =
-        [a1.id, a2.id, a3.id]
-        |> Enum.sort(:desc)
-        |> Enum.take(2)
-
-      expected_author2_ids =
-        [b1.id, b2.id]
-        |> Enum.sort(:desc)
-        |> Enum.take(2)
-
-      assert by_author[author1.id] |> Enum.map(& &1.id) |> Enum.sort(:desc) ==
-               expected_author1_ids
-
-      assert by_author[author2.id] |> Enum.map(& &1.id) |> Enum.sort(:desc) ==
-               expected_author2_ids
-    end
-
-    test "first_per is top_n_per with n: 1" do
-      author1 = insert(:user, %{name: "Author1"})
-      author2 = insert(:user, %{name: "Author2"})
-
-      a1 = insert(:article, author: author1, publisher: author1)
-      a2 = insert(:article, author: author1, publisher: author1)
-
-      b1 = insert(:article, author: author2, publisher: author2)
-      b2 = insert(:article, author: author2, publisher: author2)
-
-      results =
-        Article
-        |> QueryBuilder.first_per(partition_by: [:author_id], order_by: [desc: :id])
-        |> Repo.all()
-
-      by_author = Enum.group_by(results, & &1.author_id)
-      assert Enum.map(by_author[author1.id], & &1.id) == [max(a1.id, a2.id)]
-      assert Enum.map(by_author[author2.id], & &1.id) == [max(b1.id, b2.id)]
-    end
-
-    test "top_n_per can prefer DISTINCT ON for n: 1 on Postgres" do
-      query =
-        Article
-        |> QueryBuilder.top_n_per(
-          partition_by: [:author_id],
-          order_by: [desc: :id],
-          n: 1,
-          prefer_distinct_on?: true
-        )
-
-      {sql, _params} = Ecto.Adapters.SQL.to_sql(:all, Repo, query)
-
-      assert sql =~ "DISTINCT ON"
-      refute Regex.match?(~r/row_number/i, sql)
-    end
-
-    test "top_n_per can prefer DISTINCT ON when distinct is explicitly false" do
-      base = from(a in Article, distinct: false)
-
-      query =
-        base
-        |> QueryBuilder.top_n_per(
-          partition_by: [:author_id],
-          order_by: [desc: :id],
-          n: 1,
-          prefer_distinct_on?: true
-        )
-
-      {sql, _params} = Ecto.Adapters.SQL.to_sql(:all, Repo, query)
-
-      assert sql =~ "DISTINCT ON"
-      refute Regex.match?(~r/row_number/i, sql)
-    end
-
-    test "top_n_per prefer_distinct_on? is ignored for n > 1" do
-      query =
-        Article
-        |> QueryBuilder.top_n_per(
-          partition_by: [:author_id],
-          order_by: [desc: :id],
-          n: 2,
-          prefer_distinct_on?: true
-        )
-
-      {sql, _params} = Ecto.Adapters.SQL.to_sql(:all, Repo, query)
-
-      refute sql =~ "DISTINCT ON"
-      assert Regex.match?(~r/row_number/i, sql)
-    end
-
-    test "top_n_per validates prefer_distinct_on?" do
-      assert_raise ArgumentError, ~r/prefer_distinct_on\?/i, fn ->
-        Article
-        |> QueryBuilder.top_n_per(
-          partition_by: [:author_id],
-          order_by: [desc: :id],
-          n: 1,
-          prefer_distinct_on?: :yes
-        )
-        |> Repo.all()
-      end
-    end
-
-    test "top_n_per requires a primary-key tie-breaker in order_by" do
-      assert_raise ArgumentError, ~r/include the root primary key fields as a tie-breaker/i, fn ->
-        Article
-        |> QueryBuilder.top_n_per(
-          partition_by: [:author_id],
-          order_by: [desc: :inserted_at],
-          n: 1
-        )
-        |> Repo.all()
-      end
-    end
-
-    test "top_n_per must be applied before limit/offset" do
-      assert_raise ArgumentError, ~r/must be applied before limit\/offset/i, fn ->
-        Article
-        |> QueryBuilder.limit(1)
-        |> QueryBuilder.top_n_per(partition_by: [:author_id], order_by: [desc: :id], n: 1)
-        |> Repo.all()
-      end
-    end
-
-    test "top_n_per rejects to-many joins without group_by/distinct (duplicate roots)" do
-      assert_raise ArgumentError, ~r/to-many joins/i, fn ->
-        User
-        |> QueryBuilder.inner_join(:authored_articles)
-        |> QueryBuilder.top_n_per(partition_by: [:role_id], order_by: [desc: :id], n: 1)
-        |> Repo.all()
-      end
-    end
-
-    test "top_n_per rejects to-many joins when distinct is explicitly false" do
-      assert_raise ArgumentError, ~r/to-many joins/i, fn ->
-        User
-        |> QueryBuilder.inner_join(:authored_articles)
-        |> QueryBuilder.distinct(false)
-        |> QueryBuilder.top_n_per(partition_by: [:role_id], order_by: [desc: :id], n: 1)
-        |> Repo.all()
-      end
-    end
-
-    test "top_n_per supports ordering by aggregates on grouped to-many joins" do
-      author = insert(:user, %{name: "Author"})
-
-      a1 = insert(:article, author: author, publisher: author)
-      a2 = insert(:article, author: author, publisher: author)
-      a3 = insert(:article, author: author, publisher: author)
-
-      _ = insert_list(1, :comment, article: a1, user: author)
-      _ = insert_list(3, :comment, article: a2, user: author)
-      _ = insert_list(2, :comment, article: a3, user: author)
-
-      results =
-        Article
-        |> QueryBuilder.where(author_id: author.id)
-        |> QueryBuilder.left_join(:comments)
-        |> QueryBuilder.group_by(:id)
-        |> QueryBuilder.top_n_per(
-          partition_by: [:author_id],
-          order_by: [desc: QueryBuilder.count(:id@comments), desc: :id],
-          n: 2
-        )
-        |> Repo.all()
-
-      assert Enum.map(results, & &1.id) |> Enum.sort() == Enum.sort([a2.id, a3.id])
-    end
-  end
-
   test "group_by/3 supports association tokens" do
     rows =
       User
@@ -1190,6 +1004,39 @@ defmodule QueryBuilderTest do
   end
 
   describe "full-path tokens (field@assoc@nested_assoc...)" do
+    test "shorthand assoc tokens are resolved against the final assoc tree (can become ambiguous)" do
+      commenter = Repo.get!(User, 100)
+      liker = Repo.get!(User, 101)
+
+      article = insert(:article, %{author: commenter, publisher: commenter})
+      _ = insert(:comment, %{article: article, user: commenter, title: "x"})
+      _ = insert(:article_like, %{article: article, user: liker})
+
+      assert_raise ArgumentError, ~r/ambiguous association token @user/i, fn ->
+        Article
+        |> QueryBuilder.where([comments: :user], name@user: commenter.name)
+        |> QueryBuilder.inner_join(article_likes: :user)
+        |> Repo.all()
+      end
+    end
+
+    test "ops can reference assocs introduced later in the stage" do
+      role_a = insert(:role, %{name: "AA"})
+      role_b = insert(:role, %{name: "BB"})
+
+      u1 = insert(:user, %{name: "OrderByLateJoin1", role: role_b})
+      u2 = insert(:user, %{name: "OrderByLateJoin2", role: role_a})
+
+      users =
+        User
+        |> QueryBuilder.where({:id, :in, [u1.id, u2.id]})
+        |> QueryBuilder.order_by(asc: :name@role)
+        |> QueryBuilder.inner_join(:role)
+        |> Repo.all()
+
+      assert Enum.map(users, & &1.id) == [u2.id, u1.id]
+    end
+
     test "full-path tokens disambiguate repeated assoc names without renaming associations" do
       commenter = Repo.get!(User, 100)
       liker = Repo.get!(User, 101)
@@ -3129,16 +2976,25 @@ defmodule QueryBuilderTest do
     test "separate preloading supports chains deeper than 6" do
       assoc_chain =
         Enum.reduce(:lists.seq(7, 1, -1), nil, fn i, nested ->
-          %{
+          assoc_field = String.to_atom("field_#{i}")
+
+          %QueryBuilder.AssocList.Node{
             assoc_binding: String.to_atom("binding_#{i}"),
-            assoc_field: String.to_atom("field_#{i}"),
-            join_spec: QueryBuilder.AssocList.JoinSpec.new(true, :any, [], true),
+            assoc_field: assoc_field,
+            assoc_schema: User,
+            cardinality: :one,
+            join_spec: QueryBuilder.AssocList.JoinSpec.new(true, :any, []),
             preload_spec: QueryBuilder.AssocList.PreloadSpec.new(:separate),
-            nested_assocs: if(nested, do: [nested], else: [])
+            nested_assocs: if(nested, do: %{nested.assoc_field => nested}, else: %{}),
+            source_binding: User,
+            source_schema: User
           }
         end)
 
-      assoc_list = [assoc_chain]
+      assoc_list = %QueryBuilder.AssocList{
+        root_schema: User,
+        roots: %{assoc_chain.assoc_field => assoc_chain}
+      }
 
       _ = QueryBuilder.Query.Preload.preload(User._query(), assoc_list)
 

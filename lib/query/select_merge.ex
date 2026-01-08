@@ -5,22 +5,21 @@ defmodule QueryBuilder.Query.SelectMerge do
   import QueryBuilder.Utils
 
   def select_merge(ecto_query, assoc_list, selection) do
-    select_expr = build_select_merge_expr!(ecto_query, assoc_list, selection)
+    select_expr = build_select_merge_expr!(assoc_list, selection)
     Ecto.Query.select_merge(ecto_query, ^select_expr)
   end
 
-  defp build_select_merge_expr!(ecto_query, assoc_list, selection)
-       when is_function(selection, 1) do
-    selection.(&find_field_and_binding_from_token(ecto_query, assoc_list, &1))
+  defp build_select_merge_expr!(assoc_list, selection) when is_function(selection, 1) do
+    selection.(&find_field_and_binding_from_token(assoc_list, &1))
   end
 
-  defp build_select_merge_expr!(ecto_query, assoc_list, %{} = selection) do
+  defp build_select_merge_expr!(assoc_list, %{} = selection) do
     Enum.reduce(selection, %{}, fn {key, value}, acc ->
-      Map.put(acc, key, build_select_merge_value_expr!(ecto_query, assoc_list, value))
+      Map.put(acc, key, build_select_merge_value_expr!(assoc_list, value))
     end)
   end
 
-  defp build_select_merge_expr!(ecto_query, assoc_list, selection)
+  defp build_select_merge_expr!(assoc_list, selection)
        when is_atom(selection) or is_binary(selection) do
     token = to_string(selection)
 
@@ -32,24 +31,30 @@ defmodule QueryBuilder.Query.SelectMerge do
     end
 
     field =
-      try do
-        String.to_existing_atom(token)
-      rescue
-        ArgumentError ->
-          raise ArgumentError, "unknown field #{inspect(token)}"
+      case selection do
+        atom when is_atom(atom) ->
+          atom
+
+        _ ->
+          try do
+            String.to_existing_atom(token)
+          rescue
+            ArgumentError ->
+              raise ArgumentError, "unknown field #{inspect(token)}"
+          end
       end
 
-    build_select_merge_expr!(ecto_query, assoc_list, %{field => selection})
+    build_select_merge_expr!(assoc_list, %{field => selection})
   end
 
-  defp build_select_merge_expr!(ecto_query, assoc_list, selection) when is_list(selection) do
+  defp build_select_merge_expr!(assoc_list, selection) when is_list(selection) do
     if Keyword.keyword?(selection) do
       if length(selection) != length(Enum.uniq_by(selection, &elem(&1, 0))) do
         raise ArgumentError,
               "select_merge keyword list contains duplicate keys; got: #{inspect(selection)}"
       end
 
-      build_select_merge_expr!(ecto_query, assoc_list, Map.new(selection))
+      build_select_merge_expr!(assoc_list, Map.new(selection))
     else
       tokens =
         Enum.map(selection, fn token ->
@@ -77,36 +82,42 @@ defmodule QueryBuilder.Query.SelectMerge do
           key_str = to_string(token)
 
           key =
-            try do
-              String.to_existing_atom(key_str)
-            rescue
-              ArgumentError ->
-                raise ArgumentError, "unknown field #{inspect(key_str)}"
+            case token do
+              atom when is_atom(atom) ->
+                atom
+
+              _ ->
+                try do
+                  String.to_existing_atom(key_str)
+                rescue
+                  ArgumentError ->
+                    raise ArgumentError, "unknown field #{inspect(key_str)}"
+                end
             end
 
           Map.put(acc, key, token)
         end)
 
-      build_select_merge_expr!(ecto_query, assoc_list, map)
+      build_select_merge_expr!(assoc_list, map)
     end
   end
 
-  defp build_select_merge_expr!(_ecto_query, _assoc_list, selection) do
+  defp build_select_merge_expr!(_assoc_list, selection) do
     raise ArgumentError,
           "select_merge expects a map, a list of root fields, a single root field, or a 1-arity function; got: #{inspect(selection)}"
   end
 
-  defp build_select_merge_value_expr!(_ecto_query, _assoc_list, {:literal, value}), do: value
+  defp build_select_merge_value_expr!(_assoc_list, {:literal, value}), do: value
 
-  defp build_select_merge_value_expr!(ecto_query, assoc_list, %QueryBuilder.Aggregate{} = agg) do
-    QueryBuilder.Aggregate.to_dynamic(ecto_query, assoc_list, agg)
+  defp build_select_merge_value_expr!(assoc_list, %QueryBuilder.Aggregate{} = agg) do
+    QueryBuilder.Aggregate.to_dynamic(assoc_list, agg)
   end
 
-  defp build_select_merge_value_expr!(ecto_query, assoc_list, value)
+  defp build_select_merge_value_expr!(assoc_list, value)
        when is_atom(value) or is_binary(value) do
-    {field, binding} = find_field_and_binding_from_token(ecto_query, assoc_list, value)
+    {field, binding} = find_field_and_binding_from_token(assoc_list, value)
     Ecto.Query.dynamic([{^binding, x}], field(x, ^field))
   end
 
-  defp build_select_merge_value_expr!(_ecto_query, _assoc_list, value), do: value
+  defp build_select_merge_value_expr!(_assoc_list, value), do: value
 end

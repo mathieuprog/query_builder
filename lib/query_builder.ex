@@ -39,289 +39,293 @@ defmodule QueryBuilder do
   end
 
   def paginate(%QueryBuilder.Query{} = query, repo, opts \\ []) do
-    page_size = Keyword.get(opts, :page_size, default_page_size())
-    cursor_direction = Keyword.get(opts, :direction, :after)
-    unsafe_sql_row_pagination? = Keyword.get(opts, :unsafe_sql_row_pagination?, false)
+    QueryBuilder.Utils.with_token_cache(fn ->
+      page_size = Keyword.get(opts, :page_size, default_page_size())
+      cursor_direction = Keyword.get(opts, :direction, :after)
+      unsafe_sql_row_pagination? = Keyword.get(opts, :unsafe_sql_row_pagination?, false)
 
-    unless is_integer(page_size) and page_size >= 1 do
-      raise ArgumentError,
-            "paginate/3 page_size must be a positive integer, got: #{inspect(page_size)}"
-    end
-
-    max_page_size = Keyword.get(opts, :max_page_size)
-
-    if not is_nil(max_page_size) and not (is_integer(max_page_size) and max_page_size >= 1) do
-      raise ArgumentError,
-            "paginate/3 max_page_size must be a positive integer, got: #{inspect(max_page_size)}"
-    end
-
-    unless cursor_direction in [:after, :before] do
-      raise ArgumentError, "cursor direction #{inspect(cursor_direction)} is invalid"
-    end
-
-    base_ecto_query = Ecto.Queryable.to_query(query.ecto_query)
-    root_schema = QueryBuilder.Utils.root_schema(base_ecto_query)
-    primary_key_fields = root_schema.__schema__(:primary_key)
-
-    if primary_key_fields == [] and not unsafe_sql_row_pagination? do
-      raise ArgumentError,
-            "paginate/3 requires the root schema to have a primary key so it can append a stable tie-breaker " <>
-              "and reload unique root rows; got schema with no primary key: #{inspect(root_schema)}. " <>
-              "If you want SQL-row pagination (no cursor), pass `unsafe_sql_row_pagination?: true`."
-    end
-
-    if base_ecto_query.order_bys != [] do
-      raise ArgumentError,
-            "paginate/3 does not support paginating a query whose base ecto_query already has `order_by` clauses; " <>
-              "express ordering via `QueryBuilder.order_by/*` (or remove base ordering via `Ecto.Query.exclude(base_query, :order_by)`) " <>
-              "before calling paginate/3. base order_bys: #{inspect(base_ecto_query.order_bys)}"
-    end
-
-    page_size =
-      if is_nil(max_page_size) do
-        page_size
-      else
-        min(max_page_size, page_size)
+      unless is_integer(page_size) and page_size >= 1 do
+        raise ArgumentError,
+              "paginate/3 page_size must be a positive integer, got: #{inspect(page_size)}"
       end
 
-    cursor = decode_cursor!(Keyword.get(opts, :cursor))
+      max_page_size = Keyword.get(opts, :max_page_size)
 
-    query = limit(query, page_size + 1)
+      if not is_nil(max_page_size) and not (is_integer(max_page_size) and max_page_size >= 1) do
+        raise ArgumentError,
+              "paginate/3 max_page_size must be a positive integer, got: #{inspect(max_page_size)}"
+      end
 
-    query =
-      if primary_key_fields == [] do
-        query
-      else
-        existing_order_fields =
-          query.operations
-          |> Enum.flat_map(fn
-            %{type: :order_by, args: [keyword_list]} ->
-              Enum.flat_map(keyword_list, fn
-                {_direction, field} when is_atom(field) or is_binary(field) -> [to_string(field)]
-                _ -> []
-              end)
+      unless cursor_direction in [:after, :before] do
+        raise ArgumentError, "cursor direction #{inspect(cursor_direction)} is invalid"
+      end
 
-            _ ->
-              []
-          end)
-          |> MapSet.new()
-
-        missing_pk_fields =
-          Enum.reject(primary_key_fields, fn pk_field ->
-            MapSet.member?(existing_order_fields, Atom.to_string(pk_field))
-          end)
-
-        case missing_pk_fields do
-          [] ->
-            query
-
-          pk_fields ->
-            order_by(query, Enum.map(pk_fields, &{:asc, &1}))
+      base_ecto_query =
+        case query.ecto_query do
+          %Ecto.Query{} = ecto_query -> ecto_query
+          other -> Ecto.Queryable.to_query(other)
         end
+
+      root_schema = QueryBuilder.Utils.root_schema(base_ecto_query)
+      primary_key_fields = root_schema.__schema__(:primary_key)
+
+      if primary_key_fields == [] and not unsafe_sql_row_pagination? do
+        raise ArgumentError,
+              "paginate/3 requires the root schema to have a primary key so it can append a stable tie-breaker " <>
+                "and reload unique root rows; got schema with no primary key: #{inspect(root_schema)}. " <>
+                "If you want SQL-row pagination (no cursor), pass `unsafe_sql_row_pagination?: true`."
       end
 
-    # Reverse sorting order if direction is :before
-    operations =
-      if cursor_direction == :before do
-        query.operations
-        |> Enum.map(fn
-          %{type: :order_by, args: [keyword_list]} = operation ->
-            updated_keyword_list =
-              Enum.map(keyword_list, fn {direction, field} ->
-                {reverse_order_direction(direction, field), field}
-              end)
-
-            Map.put(operation, :args, [updated_keyword_list])
-
-          operation ->
-            operation
-        end)
-      else
-        query.operations
+      if base_ecto_query.order_bys != [] do
+        raise ArgumentError,
+              "paginate/3 does not support paginating a query whose base ecto_query already has `order_by` clauses; " <>
+                "express ordering via `QueryBuilder.order_by/*` (or remove base ordering via `Ecto.Query.exclude(base_query, :order_by)`) " <>
+                "before calling paginate/3. base order_bys: #{inspect(base_ecto_query.order_bys)}"
       end
 
-    query = Map.put(query, :operations, operations)
-
-    order_by_list =
-      query.operations
-      |> Enum.filter(&match?(%{type: :order_by}, &1))
-      |> Enum.reverse()
-      |> Enum.flat_map(fn %{args: [keyword_list]} -> keyword_list end)
-      |> Enum.map(fn {direction, field} ->
-        if is_atom(field) or is_binary(field) do
-          {direction, to_string(field)}
+      page_size =
+        if is_nil(max_page_size) do
+          page_size
         else
-          {direction, field}
+          min(max_page_size, page_size)
         end
-      end)
-      |> Enum.uniq_by(fn {_direction, field} -> field end)
 
-    cursor_pagination_supported? =
-      primary_key_fields != [] and
-        Enum.all?(order_by_list, fn {direction, field} ->
-          cursorable_order_by_field?(field) and supported_cursor_order_direction?(direction)
-        end)
+      cursor = decode_cursor!(Keyword.get(opts, :cursor))
 
-    if cursor != %{} and not cursor_pagination_supported? do
-      raise ArgumentError,
-            "paginate/3 cursor pagination requires order_by fields to be simple fields (atoms/strings, including tokens like :name@role) " <>
-              "with supported directions (:asc, :desc, :asc_nulls_first, :asc_nulls_last, :desc_nulls_first, :desc_nulls_last); " <>
-              "got: #{inspect(order_by_list)}. " <>
-              "If you want to opt into SQL-row pagination (no cursor), pass `unsafe_sql_row_pagination?: true` and omit `cursor:`."
-    end
+      query = limit(query, page_size + 1)
 
-    if not cursor_pagination_supported? and not unsafe_sql_row_pagination? do
-      raise ArgumentError,
-            "paginate/3 requires cursorable order_by fields to support cursor pagination; " <>
-              "got: #{inspect(order_by_list)}. " <>
-              "Fix: use cursorable order_by fields (atoms/strings, including tokens like :name@role), or pass " <>
-              "`unsafe_sql_row_pagination?: true` to opt into SQL-row pagination (no cursor)."
-    end
-
-    if cursor != %{} do
-      validate_cursor_matches_order_by!(cursor, order_by_list)
-    end
-
-    valid_cursor? = cursor_pagination_supported? and cursor != %{}
-
-    query =
-      if valid_cursor? do
-        filters = build_keyset_or_filters(repo, order_by_list, cursor)
-
-        case filters do
-          [] ->
-            query
-
-          [first_filter | rest_filters] ->
-            or_filters = Enum.map(rest_filters, &{:or, &1})
-            where(query, [], first_filter, or_filters)
-        end
-      else
-        query
-      end
-
-    {ecto_query, assoc_list} = QueryBuilder.Query.to_query_and_assoc_list(query)
-
-    ensure_paginate_select_is_root!(ecto_query)
-
-    {entries, first_row_cursor_map, last_row_cursor_map, has_more?} =
-      if cursor_pagination_supported? do
-        if single_query_cursor_pagination_possible?(ecto_query, assoc_list, order_by_list) do
-          {entries, has_more?} =
-            ecto_query
-            |> repo.all()
-            |> normalize_paginated_rows(page_size, cursor_direction)
-
-          first_entry = List.first(entries)
-          last_entry = List.last(entries)
-
-          {entries, cursor_map_from_entry(first_entry, order_by_list),
-           cursor_map_from_entry(last_entry, order_by_list), has_more?}
+      query =
+        if primary_key_fields == [] do
+          query
         else
-          cursor_select_map = build_cursor_select_map(ecto_query, assoc_list, order_by_list)
+          existing_order_fields =
+            query.operations
+            |> Enum.flat_map(fn
+              {:order_by, _assocs, [keyword_list]} ->
+                Enum.flat_map(keyword_list, fn
+                  {_direction, field} when is_atom(field) or is_binary(field) ->
+                    [to_string(field)]
 
-          page_keys_query =
-            ecto_query
-            |> Query.exclude([:preload, :select])
-            |> Ecto.Query.select([{^root_schema, x}], ^cursor_select_map)
-            |> Ecto.Query.distinct(true)
+                  _ ->
+                    []
+                end)
 
-          page_key_rows = repo.all(page_keys_query)
+              _ ->
+                []
+            end)
+            |> MapSet.new()
 
-          {page_key_rows, has_more?} =
-            normalize_paginated_rows(page_key_rows, page_size, cursor_direction)
+          missing_pk_fields =
+            Enum.reject(primary_key_fields, fn pk_field ->
+              MapSet.member?(existing_order_fields, Atom.to_string(pk_field))
+            end)
 
-          keys = Enum.map(page_key_rows, &primary_key_value_from_row(&1, primary_key_fields))
+          case missing_pk_fields do
+            [] ->
+              query
 
-          if length(keys) != length(Enum.uniq(keys)) do
-            raise ArgumentError,
-                  "paginate/3 could not produce a page of unique root rows; " <>
-                    "this usually means your order_by depends on a to-many join (e.g. ordering by a has_many field). " <>
-                    "Use an aggregation (e.g. max/min) or order by root/to-one fields only. " <>
-                    "order_by: #{inspect(order_by_list)}"
+            pk_fields ->
+              order_by(query, Enum.map(pk_fields, &{:asc, &1}))
           end
-
-          entries = load_entries_for_page(repo, ecto_query, root_schema, primary_key_fields, keys)
-
-          first_row = List.first(page_key_rows)
-          last_row = List.last(page_key_rows)
-
-          {entries, first_row, last_row, has_more?}
         end
-      else
-        if ecto_query.preloads != [] do
-          has_more_query =
-            ecto_query
-            |> Query.exclude([:preload, :select])
-            |> Ecto.Query.select([{^root_schema, _x}], 1)
 
-          has_more? = length(repo.all(has_more_query)) == page_size + 1
+      # Reverse sorting order if direction is :before
+      operations =
+        if cursor_direction == :before do
+          query.operations
+          |> Enum.map(fn
+            {:order_by, assocs, [keyword_list]} ->
+              updated_keyword_list =
+                Enum.map(keyword_list, fn {direction, field} ->
+                  {reverse_order_direction(direction, field), field}
+                end)
 
-          entries_query =
-            ecto_query
-            |> Query.exclude([:limit])
-            |> Ecto.Query.limit(^page_size)
+              {:order_by, assocs, [updated_keyword_list]}
 
-          entries = repo.all(entries_query)
-
-          entries = reverse_if_before(entries, cursor_direction)
-
-          {entries, nil, nil, has_more?}
+            operation ->
+              operation
+          end)
         else
-          {entries, has_more?} =
-            ecto_query
-            |> repo.all()
-            |> normalize_paginated_rows(page_size, cursor_direction)
-
-          {entries, nil, nil, has_more?}
+          query.operations
         end
+
+      query = Map.put(query, :operations, operations)
+
+      order_by_list =
+        query.operations
+        |> Enum.filter(&match?({:order_by, _, _}, &1))
+        |> Enum.reverse()
+        |> Enum.flat_map(fn {:order_by, _assocs, [keyword_list]} -> keyword_list end)
+        |> Enum.map(fn {direction, field} ->
+          if is_atom(field) or is_binary(field) do
+            {direction, to_string(field)}
+          else
+            {direction, field}
+          end
+        end)
+        |> Enum.uniq_by(fn {_direction, field} -> field end)
+
+      cursor_pagination_supported? =
+        primary_key_fields != [] and
+          Enum.all?(order_by_list, fn {direction, field} ->
+            cursorable_order_by_field?(field) and supported_cursor_order_direction?(direction)
+          end)
+
+      if cursor != %{} and not cursor_pagination_supported? do
+        raise ArgumentError,
+              "paginate/3 cursor pagination requires order_by fields to be simple fields (atoms/strings, including tokens like :name@role) " <>
+                "with supported directions (:asc, :desc, :asc_nulls_first, :asc_nulls_last, :desc_nulls_first, :desc_nulls_last); " <>
+                "got: #{inspect(order_by_list)}. " <>
+                "If you want to opt into SQL-row pagination (no cursor), pass `unsafe_sql_row_pagination?: true` and omit `cursor:`."
       end
 
-    build_cursor = fn
-      nil -> nil
-      cursor_map when is_map(cursor_map) -> encode_cursor(cursor_map)
-    end
+      if not cursor_pagination_supported? and not unsafe_sql_row_pagination? do
+        raise ArgumentError,
+              "paginate/3 requires cursorable order_by fields to support cursor pagination; " <>
+                "got: #{inspect(order_by_list)}. " <>
+                "Fix: use cursorable order_by fields (atoms/strings, including tokens like :name@role), or pass " <>
+                "`unsafe_sql_row_pagination?: true` to opt into SQL-row pagination (no cursor)."
+      end
 
-    %{
-      pagination: %{
-        cursor_direction: cursor_direction,
-        cursor_for_entries_before: build_cursor.(first_row_cursor_map),
-        cursor_for_entries_after: build_cursor.(last_row_cursor_map),
-        has_more_entries: has_more?,
-        max_page_size: page_size
-      },
-      paginated_entries: entries
-    }
+      if cursor != %{} do
+        validate_cursor_matches_order_by!(cursor, order_by_list)
+      end
+
+      valid_cursor? = cursor_pagination_supported? and cursor != %{}
+
+      query =
+        if valid_cursor? do
+          filters = build_keyset_or_filters(repo, order_by_list, cursor)
+
+          case filters do
+            [] ->
+              query
+
+            [first_filter | rest_filters] ->
+              or_filters = Enum.map(rest_filters, &{:or, &1})
+              where(query, [], first_filter, or_filters)
+          end
+        else
+          query
+        end
+
+      {ecto_query, assoc_list} = QueryBuilder.Query.to_query_and_assoc_list(query)
+
+      ensure_paginate_select_is_root!(ecto_query)
+
+      {entries, first_row_cursor_map, last_row_cursor_map, has_more?} =
+        if cursor_pagination_supported? do
+          if single_query_cursor_pagination_possible?(ecto_query, assoc_list, order_by_list) do
+            {entries, has_more?} =
+              ecto_query
+              |> repo.all()
+              |> normalize_paginated_rows(page_size, cursor_direction)
+
+            first_entry = List.first(entries)
+            last_entry = List.last(entries)
+
+            {entries, cursor_map_from_entry(first_entry, order_by_list),
+             cursor_map_from_entry(last_entry, order_by_list), has_more?}
+          else
+            cursor_select_map = build_cursor_select_map(assoc_list, order_by_list)
+
+            page_keys_query =
+              ecto_query
+              |> Query.exclude([:preload, :select])
+              |> Ecto.Query.select([{^root_schema, x}], ^cursor_select_map)
+              |> Ecto.Query.distinct(true)
+
+            page_key_rows = repo.all(page_keys_query)
+
+            {page_key_rows, has_more?} =
+              normalize_paginated_rows(page_key_rows, page_size, cursor_direction)
+
+            keys = Enum.map(page_key_rows, &primary_key_value_from_row(&1, primary_key_fields))
+
+            if length(keys) != length(Enum.uniq(keys)) do
+              raise ArgumentError,
+                    "paginate/3 could not produce a page of unique root rows; " <>
+                      "this usually means your order_by depends on a to-many join (e.g. ordering by a has_many field). " <>
+                      "Use an aggregation (e.g. max/min) or order by root/to-one fields only. " <>
+                      "order_by: #{inspect(order_by_list)}"
+            end
+
+            entries =
+              load_entries_for_page(repo, ecto_query, root_schema, primary_key_fields, keys)
+
+            first_row = List.first(page_key_rows)
+            last_row = List.last(page_key_rows)
+
+            {entries, first_row, last_row, has_more?}
+          end
+        else
+          if ecto_query.preloads != [] do
+            has_more_query =
+              ecto_query
+              |> Query.exclude([:preload, :select])
+              |> Ecto.Query.select([{^root_schema, _x}], 1)
+
+            has_more? = length(repo.all(has_more_query)) == page_size + 1
+
+            entries_query =
+              ecto_query
+              |> Query.exclude([:limit])
+              |> Ecto.Query.limit(^page_size)
+
+            entries = repo.all(entries_query)
+
+            entries = reverse_if_before(entries, cursor_direction)
+
+            {entries, nil, nil, has_more?}
+          else
+            {entries, has_more?} =
+              ecto_query
+              |> repo.all()
+              |> normalize_paginated_rows(page_size, cursor_direction)
+
+            {entries, nil, nil, has_more?}
+          end
+        end
+
+      build_cursor = fn
+        nil -> nil
+        cursor_map when is_map(cursor_map) -> encode_cursor(cursor_map)
+      end
+
+      %{
+        pagination: %{
+          cursor_direction: cursor_direction,
+          cursor_for_entries_before: build_cursor.(first_row_cursor_map),
+          cursor_for_entries_after: build_cursor.(last_row_cursor_map),
+          has_more_entries: has_more?,
+          max_page_size: page_size
+        },
+        paginated_entries: entries
+      }
+    end)
   end
 
   defp build_keyset_or_filters(repo, order_by_list, cursor) do
     adapter = repo.__adapter__()
 
-    order_specs =
-      Enum.map(order_by_list, fn {direction, field} ->
-        {dir, nulls} = normalize_cursor_order_direction(adapter, direction, field)
-
-        %{
-          field: field,
-          dir: dir,
-          nulls: nulls,
-          cursor_value: Map.fetch!(cursor, to_string(field))
-        }
-      end)
-
     {_, filters} =
-      Enum.reduce(order_specs, {[], []}, fn %{
-                                              field: field,
-                                              dir: dir,
-                                              nulls: nulls,
-                                              cursor_value: value
-                                            },
-                                            {prev_fields, filters} ->
-        filters = filters ++ keyset_groups_for_field(prev_fields, field, dir, nulls, value)
-        {prev_fields ++ [{field, value}], filters}
+      Enum.reduce(order_by_list, {[], []}, fn {direction, field},
+                                              {prev_fields_rev, filters_rev} ->
+        {dir, nulls} = normalize_cursor_order_direction(adapter, direction, field)
+        value = Map.fetch!(cursor, to_string(field))
+
+        filters_rev =
+          case keyset_groups_for_field(prev_fields_rev, field, dir, nulls, value) do
+            [] -> filters_rev
+            [group] -> [group | filters_rev]
+            [group1, group2] -> [group2, group1 | filters_rev]
+          end
+
+        prev_fields_rev = [{field, value} | prev_fields_rev]
+        {prev_fields_rev, filters_rev}
       end)
 
-    filters
+    Enum.reverse(filters)
   end
 
   defp ensure_paginate_select_is_root!(ecto_query) do
@@ -340,21 +344,20 @@ defmodule QueryBuilder do
   end
 
   defp single_query_cursor_pagination_possible?(ecto_query, assoc_list, order_by_list) do
-    cursor_fields_extractable_from_entries?(ecto_query, assoc_list, order_by_list) and
-      only_to_one_assoc_joins?(ecto_query) and not has_to_many_preloads?(assoc_list)
+    root_schema = assoc_list.root_schema
+
+    cursor_fields_extractable_from_entries?(root_schema, assoc_list, order_by_list) and
+      only_to_one_assoc_joins?(ecto_query, root_schema) and not has_to_many_preloads?(assoc_list)
   end
 
-  defp cursor_fields_extractable_from_entries?(ecto_query, assoc_list, order_by_list) do
-    source_schema = QueryBuilder.Utils.root_schema(ecto_query)
-
+  defp cursor_fields_extractable_from_entries?(root_schema, assoc_list, order_by_list)
+       when is_atom(root_schema) do
     Enum.all?(order_by_list, fn {_direction, token} ->
-      token_str = to_string(token)
-
-      case String.split(token_str, "@", parts: 3) do
-        [_field] ->
+      case split_cursor_token(token) do
+        {:root, _token_str, _field} ->
           true
 
-        [_field, assoc_field] ->
+        {:assoc, _token_str, _field, assoc_field} ->
           assoc_field =
             try do
               String.to_existing_atom(assoc_field)
@@ -363,7 +366,7 @@ defmodule QueryBuilder do
             end
 
           not is_nil(assoc_field) and
-            not is_nil(source_schema.__schema__(:association, assoc_field)) and
+            not is_nil(root_schema.__schema__(:association, assoc_field)) and
             preloaded_to_one_root_assoc?(assoc_list, assoc_field)
 
         _ ->
@@ -372,87 +375,110 @@ defmodule QueryBuilder do
     end)
   end
 
-  defp preloaded_to_one_root_assoc?([], _assoc_field), do: false
+  defp preloaded_to_one_root_assoc?(%QueryBuilder.AssocList{} = assoc_list, assoc_field)
+       when is_atom(assoc_field) do
+    case QueryBuilder.AssocList.root_assoc(assoc_list, assoc_field) do
+      %QueryBuilder.AssocList.Node{preload_spec: preload_spec, cardinality: :one}
+      when not is_nil(preload_spec) ->
+        true
 
-  defp preloaded_to_one_root_assoc?([assoc_data | rest], assoc_field) do
-    if assoc_data.assoc_field == assoc_field do
-      assoc_data.preload_spec != nil and assoc_data.cardinality == :one
-    else
-      preloaded_to_one_root_assoc?(rest, assoc_field)
+      _ ->
+        false
     end
   end
 
-  defp only_to_one_assoc_joins?(%Ecto.Query{} = ecto_query) do
-    root_schema = QueryBuilder.Utils.root_schema(ecto_query)
+  defp only_to_one_assoc_joins?(%Ecto.Query{} = ecto_query, root_schema)
+       when is_atom(root_schema) do
+    schemas_by_index = %{0 => root_schema}
 
-    Enum.reduce_while(ecto_query.joins, [root_schema], fn join, schemas ->
-      case join do
-        %Ecto.Query.JoinExpr{assoc: {parent_index, assoc_field}}
-        when is_integer(parent_index) and is_atom(assoc_field) ->
-          with {:ok, parent_schema} <- Enum.fetch(schemas, parent_index),
-               %{cardinality: :one, queryable: assoc_schema} <-
-                 parent_schema.__schema__(:association, assoc_field),
-               true <- is_atom(assoc_schema) do
-            {:cont, schemas ++ [assoc_schema]}
-          else
-            _ -> {:halt, :unsafe}
-          end
+    Enum.reduce_while(
+      Enum.with_index(ecto_query.joins, 1),
+      schemas_by_index,
+      fn {join, join_index}, schemas_by_index ->
+        case join do
+          %Ecto.Query.JoinExpr{assoc: {parent_index, assoc_field}}
+          when is_integer(parent_index) and is_atom(assoc_field) ->
+            with {:ok, parent_schema} <- Map.fetch(schemas_by_index, parent_index),
+                 %{cardinality: :one, queryable: assoc_schema} <-
+                   parent_schema.__schema__(:association, assoc_field),
+                 true <- is_atom(assoc_schema) do
+              {:cont, Map.put(schemas_by_index, join_index, assoc_schema)}
+            else
+              _ -> {:halt, :unsafe}
+            end
 
-        _ ->
-          {:halt, :unsafe}
+          _ ->
+            {:halt, :unsafe}
+        end
       end
-    end) != :unsafe
+    ) != :unsafe
   end
 
-  defp has_to_many_preloads?([]), do: false
-
-  defp has_to_many_preloads?([assoc_data | rest]) do
-    (assoc_data.preload_spec != nil and assoc_data.cardinality == :many) ||
-      has_to_many_preloads?(assoc_data.nested_assocs) ||
-      has_to_many_preloads?(rest)
+  defp has_to_many_preloads?(%QueryBuilder.AssocList{} = assoc_list) do
+    QueryBuilder.AssocList.any?(assoc_list, fn assoc_data ->
+      assoc_data.preload_spec != nil and assoc_data.cardinality == :many
+    end)
   end
 
   defp cursor_map_from_entry(nil, _order_by_list), do: nil
 
   defp cursor_map_from_entry(entry, order_by_list) do
     Enum.reduce(order_by_list, %{}, fn {_direction, token}, acc ->
-      token_str = to_string(token)
-
-      value =
-        case String.split(token_str, "@", parts: 3) do
-          [field] ->
-            field = String.to_existing_atom(field)
-            Map.fetch!(entry, field)
-
-          [field, assoc_field] ->
-            field = String.to_existing_atom(field)
-            assoc_field = String.to_existing_atom(assoc_field)
-            assoc = Map.fetch!(entry, assoc_field)
-
-            cond do
-              match?(%Ecto.Association.NotLoaded{}, assoc) ->
-                raise ArgumentError,
-                      "paginate/3 internal error: expected association #{inspect(assoc_field)} to be preloaded " <>
-                        "in order to build cursor field #{inspect(token_str)} from the returned structs"
-
-              is_nil(assoc) ->
-                nil
-
-              is_map(assoc) ->
-                Map.fetch!(assoc, field)
-
-              true ->
-                raise ArgumentError,
-                      "paginate/3 internal error: expected association #{inspect(assoc_field)} to be a struct or nil, got: #{inspect(assoc)}"
-            end
-
-          _ ->
-            raise ArgumentError,
-                  "paginate/3 internal error: unexpected cursor token #{inspect(token_str)}"
-        end
-
+      {token_str, value} = cursor_value_from_entry(entry, token)
       Map.put(acc, token_str, value)
     end)
+  end
+
+  defp split_cursor_token(token) do
+    token_str = to_string(token)
+
+    case String.split(token_str, "@", parts: 3) do
+      [field] ->
+        {:root, token_str, field}
+
+      [field, assoc_field] ->
+        {:assoc, token_str, field, assoc_field}
+
+      _ ->
+        :unsupported
+    end
+  end
+
+  defp cursor_value_from_entry(entry, token) do
+    case split_cursor_token(token) do
+      {:root, token_str, field} ->
+        field = String.to_existing_atom(field)
+        {token_str, Map.fetch!(entry, field)}
+
+      {:assoc, token_str, field, assoc_field} ->
+        field = String.to_existing_atom(field)
+        assoc_field = String.to_existing_atom(assoc_field)
+        assoc = Map.fetch!(entry, assoc_field)
+
+        value =
+          cond do
+            match?(%Ecto.Association.NotLoaded{}, assoc) ->
+              raise ArgumentError,
+                    "paginate/3 internal error: expected association #{inspect(assoc_field)} to be preloaded " <>
+                      "in order to build cursor field #{inspect(token_str)} from the returned structs"
+
+            is_nil(assoc) ->
+              nil
+
+            is_map(assoc) ->
+              Map.fetch!(assoc, field)
+
+            true ->
+              raise ArgumentError,
+                    "paginate/3 internal error: expected association #{inspect(assoc_field)} to be a struct or nil, got: #{inspect(assoc)}"
+          end
+
+        {token_str, value}
+
+      :unsupported ->
+        raise ArgumentError,
+              "paginate/3 internal error: unexpected cursor token #{inspect(to_string(token))}"
+    end
   end
 
   defp primary_key_value_from_row(row, [pk_field]) do
@@ -563,42 +589,42 @@ defmodule QueryBuilder do
     {rows, has_more?}
   end
 
-  defp keyset_groups_for_field(prev_fields, field, _dir, nulls, nil) do
+  defp keyset_groups_for_field(prev_fields_rev, field, _dir, nulls, nil) do
     # If the cursor value is NULL, we can’t emit `field < NULL` / `field > NULL`.
     # Instead, we:
     #   - optionally include a branch for the non-NULL group (when NULLs sort first)
     #   - then rely on subsequent order_by fields for tie-breaking inside the NULL group
     case nulls do
       :first ->
-        [prev_fields ++ [{field, :ne, nil}]]
+        [[{field, :ne, nil} | prev_fields_rev]]
 
       :last ->
         []
     end
   end
 
-  defp keyset_groups_for_field(prev_fields, field, dir, nulls, value) do
+  defp keyset_groups_for_field(prev_fields_rev, field, dir, nulls, value) do
     operator =
       case dir do
         :asc -> :gt
         :desc -> :lt
       end
 
-    groups = [prev_fields ++ [{field, operator, value}]]
+    group = [{field, operator, value} | prev_fields_rev]
 
     # When NULLs sort last, NULL is after any non-NULL cursor value, so include it.
     case nulls do
-      :last -> groups ++ [prev_fields ++ [{field, nil}]]
-      :first -> groups
+      :last -> [group, [{field, nil} | prev_fields_rev]]
+      :first -> [group]
     end
   end
 
-  defp build_cursor_select_map(ecto_query, assoc_list, order_by_list) do
+  defp build_cursor_select_map(assoc_list, order_by_list) do
     cursor_field_tokens = Enum.map(order_by_list, &elem(&1, 1))
 
     Enum.reduce(cursor_field_tokens, %{}, fn token, acc ->
       {field, binding} =
-        QueryBuilder.Utils.find_field_and_binding_from_token(ecto_query, assoc_list, token)
+        QueryBuilder.Utils.find_field_and_binding_from_token(assoc_list, token)
 
       value_expr = Ecto.Query.dynamic([{^binding, x}], field(x, ^field))
 
@@ -826,8 +852,10 @@ defmodule QueryBuilder do
   end
 
   # NOTE: Cursor token parsing/resolution is intentionally delegated to the same
-  # token system used by where/order_by (`QueryBuilder.Utils.find_field_and_binding_from_token/3`),
+  # token system used by where/order_by (`QueryBuilder.Utils.find_field_and_binding_from_token/2`),
   # so we don't couple pagination correctness to binding naming conventions.
+  #
+  # See `QueryBuilder.Utils.find_field_and_binding_from_token/2`.
 
   def default_page_size() do
     Application.get_env(:query_builder, :default_page_size, 100)
@@ -847,12 +875,7 @@ defmodule QueryBuilder do
     %{
       query
       | operations: [
-          %{
-            type: :preload,
-            assocs: assoc_fields,
-            preload_spec: QueryBuilder.AssocList.PreloadSpec.new(:separate),
-            args: []
-          }
+          {:preload, assoc_fields, [QueryBuilder.AssocList.PreloadSpec.new(:separate)]}
           | query.operations
         ]
     }
@@ -906,12 +929,7 @@ defmodule QueryBuilder do
     %{
       query
       | operations: [
-          %{
-            type: :preload,
-            assocs: assoc_field,
-            preload_spec: QueryBuilder.AssocList.PreloadSpec.new(:separate, opts),
-            args: []
-          }
+          {:preload, assoc_field, [QueryBuilder.AssocList.PreloadSpec.new(:separate, opts)]}
           | query.operations
         ]
     }
@@ -945,12 +963,7 @@ defmodule QueryBuilder do
     %{
       query
       | operations: [
-          %{
-            type: :preload,
-            assocs: assoc_fields,
-            preload_spec: QueryBuilder.AssocList.PreloadSpec.new(:through_join),
-            args: []
-          }
+          {:preload, assoc_fields, [QueryBuilder.AssocList.PreloadSpec.new(:through_join)]}
           | query.operations
         ]
     }
@@ -1016,7 +1029,7 @@ defmodule QueryBuilder do
     %{
       query
       | operations: [
-          %{type: :where, assocs: assoc_fields, args: [filters, or_filters]} | query.operations
+          {:where, assoc_fields, [filters, or_filters]} | query.operations
         ]
     }
   end
@@ -1107,7 +1120,10 @@ defmodule QueryBuilder do
   def select(query, assoc_fields, selection)
 
   def select(%QueryBuilder.Query{} = query, assoc_fields, selection) do
-    if Enum.any?(query.operations, fn %{type: type} -> type in [:select, :select_merge] end) do
+    if Enum.any?(query.operations, fn
+         {type, _assocs, _args} when type in [:select, :select_merge, :left_join_latest] -> true
+         _ -> false
+       end) do
       raise ArgumentError,
             "only one select expression is allowed in query; " <>
               "call `select/*` at most once and use `select_merge/*` to add fields"
@@ -1115,7 +1131,7 @@ defmodule QueryBuilder do
 
     %{
       query
-      | operations: [%{type: :select, assocs: assoc_fields, args: [selection]} | query.operations]
+      | operations: [{:select, assoc_fields, [selection]} | query.operations]
     }
   end
 
@@ -1156,10 +1172,19 @@ defmodule QueryBuilder do
   def select_merge(query, assoc_fields, selection)
 
   def select_merge(%QueryBuilder.Query{} = query, assoc_fields, selection) do
+    if Enum.any?(query.operations, fn
+         {:left_join_latest, _assocs, _args} -> true
+         _ -> false
+       end) do
+      raise ArgumentError,
+            "select_merge/* cannot be combined with left_join_latest/3; " <>
+              "left_join_latest sets a custom select (`{root, assoc}`), so select_merge is not supported"
+    end
+
     %{
       query
       | operations: [
-          %{type: :select_merge, assocs: assoc_fields, args: [selection]} | query.operations
+          {:select_merge, assoc_fields, [selection]} | query.operations
         ]
     }
   end
@@ -1391,16 +1416,8 @@ defmodule QueryBuilder do
     %{
       query
       | operations: [
-          %{
-            type: :where_exists_subquery,
-            assocs: [],
-            args: [
-              assoc_fields,
-              effective_scope_filters,
-              predicate_filters,
-              predicate_or_filters
-            ]
-          }
+          {:where_exists_subquery, [],
+           [assoc_fields, effective_scope_filters, predicate_filters, predicate_or_filters]}
           | query.operations
         ]
     }
@@ -1496,16 +1513,8 @@ defmodule QueryBuilder do
     %{
       query
       | operations: [
-          %{
-            type: :where_not_exists_subquery,
-            assocs: [],
-            args: [
-              assoc_fields,
-              effective_scope_filters,
-              predicate_filters,
-              predicate_or_filters
-            ]
-          }
+          {:where_not_exists_subquery, [],
+           [assoc_fields, effective_scope_filters, predicate_filters, predicate_or_filters]}
           | query.operations
         ]
     }
@@ -1598,7 +1607,7 @@ defmodule QueryBuilder do
   def distinct(%QueryBuilder.Query{} = query, assoc_fields, value) do
     %{
       query
-      | operations: [%{type: :distinct, assocs: assoc_fields, args: [value]} | query.operations]
+      | operations: [{:distinct, assoc_fields, [value]} | query.operations]
     }
   end
 
@@ -1613,14 +1622,13 @@ defmodule QueryBuilder do
   This is primarily useful when you must join a to-many association (e.g. for
   filtering/order_by) but still want a unique list of root structs.
 
-  On Postgres, this uses `DISTINCT ON (root_pk...)` (via Ecto distinct
-  expressions). In join-multiplying queries, `order_by` determines which joined
-  row “wins” for each root.
+  Postgres-only: uses `DISTINCT ON (root_pk...)` (via Ecto distinct expressions).
+  In join-multiplying queries, `order_by` determines which joined row “wins” for
+  each root.
 
   Notes:
   - Requires the root schema to have a primary key.
-  - Requires a database that supports `DISTINCT ON` (Postgres). MySQL does not;
-    on MySQL, Ecto will raise if you attempt to use `distinct_roots/1`.
+  - Requires a database that supports `DISTINCT ON` (Postgres).
   - Cannot be combined with `preload_through_join` on to-many associations (it
     would drop association rows).
   """
@@ -1629,7 +1637,7 @@ defmodule QueryBuilder do
   def distinct_roots(%QueryBuilder.Query{} = query, true) do
     %{
       query
-      | operations: [%{type: :distinct_roots, assocs: [], args: []} | query.operations]
+      | operations: [{:distinct_roots, [], []} | query.operations]
     }
   end
 
@@ -1679,7 +1687,7 @@ defmodule QueryBuilder do
   def group_by(%QueryBuilder.Query{} = query, assoc_fields, expr) do
     %{
       query
-      | operations: [%{type: :group_by, assocs: assoc_fields, args: [expr]} | query.operations]
+      | operations: [{:group_by, assoc_fields, [expr]} | query.operations]
     }
   end
 
@@ -1722,7 +1730,7 @@ defmodule QueryBuilder do
     %{
       query
       | operations: [
-          %{type: :having, assocs: assoc_fields, args: [filters, or_filters]} | query.operations
+          {:having, assoc_fields, [filters, or_filters]} | query.operations
         ]
     }
   end
@@ -1796,7 +1804,7 @@ defmodule QueryBuilder do
   def order_by(%QueryBuilder.Query{} = query, assoc_fields, value) do
     %{
       query
-      | operations: [%{type: :order_by, assocs: assoc_fields, args: [value]} | query.operations]
+      | operations: [{:order_by, assoc_fields, [value]} | query.operations]
     }
   end
 
@@ -1874,7 +1882,7 @@ defmodule QueryBuilder do
   def limit(%QueryBuilder.Query{} = query, value) do
     # Limit order must be maintained, similar to Ecto:
     # - https://hexdocs.pm/ecto/Ecto.Query-macro-limit.html
-    %{query | operations: [%{type: :limit, assocs: [], args: [value]} | query.operations]}
+    %{query | operations: [{:limit, [], [value]} | query.operations]}
   end
 
   def limit(ecto_query, value) do
@@ -1894,7 +1902,7 @@ defmodule QueryBuilder do
   def offset(%QueryBuilder.Query{} = query, value) do
     # Offset order must be maintained, similar to Ecto:
     # - https://hexdocs.pm/ecto/Ecto.Query.html#offset/3
-    %{query | operations: [%{type: :offset, assocs: [], args: [value]} | query.operations]}
+    %{query | operations: [{:offset, [], [value]} | query.operations]}
   end
 
   def offset(ecto_query, value) do
@@ -1908,15 +1916,20 @@ defmodule QueryBuilder do
   This ranks rows with `row_number() OVER (PARTITION BY ... ORDER BY ...)` and
   filters to `rn <= n`, while returning the original root rows.
 
+  Postgres-only: uses window functions for `n > 1`; uses `DISTINCT ON` for `n: 1`
+  when the query has no `distinct`.
+
   Options:
   - `:partition_by` (required) - a token or list of tokens/expressions
   - `:order_by` (required) - a keyword list like `order_by/*`
   - `:n` (required) - a positive integer
-  - `:prefer_distinct_on?` (optional) - when `n: 1` and the query has no `distinct`, prefer Postgres `DISTINCT ON` instead of window functions
+  - `:disable_distinct_on?` (optional) - when `true` and `n: 1`, forces the window-function plan (no `DISTINCT ON`)
 
   Notes:
-  - Requires the root schema to have a primary key (used to join back to the root rows).
+  - Requires the root schema to have a primary key (used as a deterministic tie-breaker, and to join back for window-function ranking).
   - `order_by` must include the root primary key fields as a tie-breaker.
+  - Must be applied before `order_by/*` (apply the final ordering after `top_n_per/*`).
+  - Must be applied before `limit/2` and `offset/2`.
 
   Examples:
   ```elixir
@@ -1940,7 +1953,7 @@ defmodule QueryBuilder do
   def top_n_per(%QueryBuilder.Query{} = query, assoc_fields, opts) when is_list(opts) do
     %{
       query
-      | operations: [%{type: :top_n_per, assocs: assoc_fields, args: [opts]} | query.operations]
+      | operations: [{:top_n_per, assoc_fields, [opts]} | query.operations]
     }
   end
 
@@ -1957,8 +1970,9 @@ defmodule QueryBuilder do
   @doc ~S"""
   A shorthand for `top_n_per/2` with `n: 1`.
 
-  Accepts the same options as `top_n_per/2` (except `:n` is fixed to 1), including
-  `prefer_distinct_on?: true` on Postgres (best-effort fast-path).
+  Accepts the same options as `top_n_per/2` (except `:n` is fixed to 1).
+
+  Postgres-only.
 
   Example:
   ```elixir
@@ -2018,7 +2032,7 @@ defmodule QueryBuilder do
   def inner_join(%QueryBuilder.Query{} = query, assoc_fields) do
     %{
       query
-      | operations: [%{type: :inner_join, assocs: assoc_fields, args: []} | query.operations]
+      | operations: [{:inner_join, assoc_fields, []} | query.operations]
     }
   end
 
@@ -2095,12 +2109,7 @@ defmodule QueryBuilder do
     %{
       query
       | operations: [
-          %{
-            type: :left_join,
-            assocs: assoc_fields,
-            left_join_mode: :leaf,
-            join_filters: join_filters
-          }
+          {:left_join, assoc_fields, [:leaf, join_filters]}
           | query.operations
         ]
     }
@@ -2145,12 +2154,7 @@ defmodule QueryBuilder do
     %{
       query
       | operations: [
-          %{
-            type: :left_join,
-            assocs: assoc_fields,
-            left_join_mode: :path,
-            join_filters: join_filters
-          }
+          {:left_join, assoc_fields, [:path, join_filters]}
           | query.operations
         ]
     }
@@ -2159,6 +2163,72 @@ defmodule QueryBuilder do
   def left_join_path(ecto_query, assoc_fields, filters, or_filters) do
     ecto_query = ensure_query_has_binding(ecto_query)
     left_join_path(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields, filters, or_filters)
+  end
+
+  @doc ~S"""
+  Left-joins the latest row of a `has_many` association and selects `{root, assoc}`.
+
+  This is a helper for “parent rows + latest child row joined” without multiplying
+  parent rows.
+
+  Postgres-only: emits `LEFT JOIN LATERAL (...) LIMIT 1`.
+
+  Supported options:
+  - `order_by:` (required) - a keyword list like `order_by/2` (applied in the assoc subquery)
+  - `where:` (optional) - filters like `where/2` (applied in the assoc subquery)
+  - `child_assoc_fields:` (optional) - assoc tree to join inside the assoc subquery (to support tokens like `field@assoc`)
+
+  Notes:
+  - Only supports a single, direct `has_many` association (no nested paths).
+  - The `order_by:` must include the assoc schema primary key fields as a tie-breaker.
+  - This sets a custom select (`{root, assoc}`), so it cannot be used with `paginate/3`.
+
+  Example:
+  ```elixir
+  User
+  |> QueryBuilder.order_by(asc: :id)
+  |> QueryBuilder.left_join_latest(:authored_articles, order_by: [desc: :inserted_at, desc: :id])
+  |> Repo.all()
+  # => [{%User{}, %Article{} | nil}, ...]
+  ```
+  """
+  def left_join_latest(query, assoc_field, opts \\ [])
+
+  def left_join_latest(_query, nil, _opts) do
+    raise ArgumentError, "left_join_latest/3 expects an association field, got nil"
+  end
+
+  def left_join_latest(_query, _assoc_field, nil) do
+    raise ArgumentError, "left_join_latest/3 expects opts to be a keyword list, got nil"
+  end
+
+  def left_join_latest(%QueryBuilder.Query{} = query, assoc_field, opts)
+      when is_atom(assoc_field) and is_list(opts) do
+    if Enum.any?(query.operations, fn
+         {type, _assocs, _args} when type in [:select, :select_merge, :left_join_latest] -> true
+         _ -> false
+       end) do
+      raise ArgumentError,
+            "only one select expression is allowed in query; " <>
+              "call `left_join_latest/3` at most once and avoid mixing it with `select/*` or `select_merge/*`"
+    end
+
+    %{
+      query
+      | operations: [
+          {:left_join_latest, [], [assoc_field, opts]} | query.operations
+        ]
+    }
+  end
+
+  def left_join_latest(query, assoc_field, opts) when is_atom(assoc_field) and is_list(opts) do
+    ecto_query = ensure_query_has_binding(query)
+    left_join_latest(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_field, opts)
+  end
+
+  def left_join_latest(_query, assoc_field, _opts) do
+    raise ArgumentError,
+          "left_join_latest/3 expects `assoc_field` to be an atom (direct association), got: #{inspect(assoc_field)}"
   end
 
   @doc ~S"""
@@ -2205,6 +2275,7 @@ defmodule QueryBuilder do
     :inner_join,
     :left_join,
     :left_join_leaf,
+    :left_join_latest,
     :left_join_path,
     :limit,
     :maybe_order_by,
@@ -2323,7 +2394,33 @@ defmodule QueryBuilder do
       validate_from_opts_boundary_arguments!(operation, arguments)
     end
 
-    result = apply(apply_module, operation, [query | arguments])
+    result =
+      if apply_module == __MODULE__ and mode == :boundary do
+        [arg] = arguments
+
+        case operation do
+          :where ->
+            where(query, arg)
+
+          :where_any ->
+            where_any(query, arg)
+
+          :order_by ->
+            order_by(query, arg)
+
+          :limit ->
+            limit(query, arg)
+
+          :offset ->
+            offset(query, arg)
+
+          other ->
+            raise ArgumentError, "internal error: unsupported boundary op: #{inspect(other)}"
+        end
+      else
+        apply(apply_module, operation, [query | arguments])
+      end
+
     do_from_opts(result, tail, apply_module, mode, extension_config)
   end
 
@@ -3122,16 +3219,7 @@ defmodule QueryBuilder do
           "#{context} expects field tokens to be atoms or strings, got: #{inspect(other)}"
   end
 
-  defp ensure_query_has_binding(query) do
-    ecto_query =
-      try do
-        Ecto.Queryable.to_query(query)
-      rescue
-        Protocol.UndefinedError ->
-          raise ArgumentError,
-                "expected an Ecto.Queryable (schema module, Ecto.Query, or QueryBuilder.Query), got: #{inspect(query)}"
-      end
-
+  defp ensure_query_has_binding(%Ecto.Query{} = ecto_query) do
     schema = QueryBuilder.Utils.root_schema(ecto_query)
     binding = schema._binding()
     root_as = ecto_query.from.as
@@ -3165,6 +3253,28 @@ defmodule QueryBuilder do
                 "but it already has named binding #{inspect(root_as)}." <>
                 " Use `from(query, as: ^#{inspect(binding)})` before passing it to QueryBuilder." <>
                 collision_hint
+    end
+  end
+
+  defp ensure_query_has_binding(query) when is_atom(query) do
+    if Code.ensure_loaded?(query) and function_exported?(query, :__schema__, 1) do
+      query
+      |> Ecto.Queryable.to_query()
+      |> ensure_query_has_binding()
+    else
+      raise ArgumentError,
+            "expected an Ecto.Queryable (schema module, Ecto.Query, or QueryBuilder.Query), got: #{inspect(query)}"
+    end
+  end
+
+  defp ensure_query_has_binding(query) do
+    if Ecto.Queryable.impl_for(query) do
+      query
+      |> Ecto.Queryable.to_query()
+      |> ensure_query_has_binding()
+    else
+      raise ArgumentError,
+            "expected an Ecto.Queryable (schema module, Ecto.Query, or QueryBuilder.Query), got: #{inspect(query)}"
     end
   end
 

@@ -5,48 +5,44 @@ defmodule QueryBuilder.Query.Distinct do
   import QueryBuilder.Utils
 
   def distinct(ecto_query, assoc_list, value) do
-    distinct_expr = build_distinct_expr!(ecto_query, assoc_list, value)
+    distinct_expr = build_distinct_expr!(assoc_list, value)
     Ecto.Query.distinct(ecto_query, ^distinct_expr)
   end
 
-  defp build_distinct_expr!(_ecto_query, _assoc_list, value) when is_boolean(value), do: value
+  defp build_distinct_expr!(_assoc_list, value) when is_boolean(value), do: value
 
-  defp build_distinct_expr!(_ecto_query, _assoc_list, %Ecto.Query.DynamicExpr{} = dynamic),
+  defp build_distinct_expr!(_assoc_list, %Ecto.Query.DynamicExpr{} = dynamic),
     do: dynamic
 
-  defp build_distinct_expr!(ecto_query, assoc_list, value)
-       when is_atom(value) or is_binary(value) do
-    token_to_dynamic(ecto_query, assoc_list, value)
+  defp build_distinct_expr!(assoc_list, value) when is_atom(value) or is_binary(value) do
+    token_to_dynamic(assoc_list, value)
   end
 
-  defp build_distinct_expr!(ecto_query, assoc_list, {direction, expr})
+  defp build_distinct_expr!(assoc_list, {direction, expr})
        when is_atom(direction) do
-    build_distinct_expr!(ecto_query, assoc_list, [{direction, expr}])
+    build_distinct_expr!(assoc_list, [{direction, expr}])
   end
 
-  defp build_distinct_expr!(ecto_query, assoc_list, values) when is_list(values) do
-    values
-    |> Enum.map(&build_distinct_order_expr!(ecto_query, assoc_list, &1))
-    |> List.flatten()
+  defp build_distinct_expr!(assoc_list, values) when is_list(values) do
+    Enum.map(values, &build_distinct_order_expr!(assoc_list, &1))
   end
 
-  defp build_distinct_expr!(_ecto_query, _assoc_list, value) do
+  defp build_distinct_expr!(_assoc_list, value) do
     raise ArgumentError,
           "distinct expects a boolean or order_by-like expressions (tokens, dynamics, lists/keyword lists); got: #{inspect(value)}"
   end
 
-  defp build_distinct_order_expr!(ecto_query, assoc_list, {direction, expr})
-       when is_atom(direction) do
+  defp build_distinct_order_expr!(assoc_list, {direction, expr}) when is_atom(direction) do
     resolved_expr =
       case expr do
         %Ecto.Query.DynamicExpr{} = dynamic ->
           dynamic
 
         fun when is_function(fun, 1) ->
-          fun.(&find_field_and_binding_from_token(ecto_query, assoc_list, &1))
+          fun.(&find_field_and_binding_from_token(assoc_list, &1))
 
         token when is_atom(token) or is_binary(token) ->
-          token_to_dynamic(ecto_query, assoc_list, token)
+          token_to_dynamic(assoc_list, token)
 
         other ->
           raise ArgumentError,
@@ -56,17 +52,17 @@ defmodule QueryBuilder.Query.Distinct do
     {direction, resolved_expr}
   end
 
-  defp build_distinct_order_expr!(ecto_query, assoc_list, expr) do
+  defp build_distinct_order_expr!(assoc_list, expr) do
     resolved_expr =
       case expr do
         %Ecto.Query.DynamicExpr{} = dynamic ->
           dynamic
 
         fun when is_function(fun, 1) ->
-          fun.(&find_field_and_binding_from_token(ecto_query, assoc_list, &1))
+          fun.(&find_field_and_binding_from_token(assoc_list, &1))
 
         token when is_atom(token) or is_binary(token) ->
-          token_to_dynamic(ecto_query, assoc_list, token)
+          token_to_dynamic(assoc_list, token)
 
         other ->
           raise ArgumentError,
@@ -76,8 +72,8 @@ defmodule QueryBuilder.Query.Distinct do
     resolved_expr
   end
 
-  defp token_to_dynamic(ecto_query, assoc_list, token) do
-    {field, binding} = find_field_and_binding_from_token(ecto_query, assoc_list, token)
+  defp token_to_dynamic(assoc_list, token) do
+    {field, binding} = find_field_and_binding_from_token(assoc_list, token)
     Ecto.Query.dynamic([{^binding, x}], field(x, ^field))
   end
 end

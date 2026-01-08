@@ -6,51 +6,51 @@ defmodule QueryBuilder.Aggregate do
 
   defstruct [:op, :arg, :modifier]
 
-  def to_dynamic(ecto_query, assoc_list, %__MODULE__{} = aggregate) do
-    to_dynamic(aggregate, &find_field_and_binding_from_token(ecto_query, assoc_list, &1))
+  def to_dynamic(assoc_list, %__MODULE__{} = aggregate) do
+    to_dynamic_with_resolver(aggregate, &find_field_and_binding_from_token(assoc_list, &1))
   end
 
-  def to_dynamic(%__MODULE__{op: :count, arg: nil}, _resolve) do
+  defp to_dynamic_with_resolver(%__MODULE__{op: :count, arg: nil}, _resolve) do
     Ecto.Query.dynamic([], count())
   end
 
-  def to_dynamic(%__MODULE__{op: :count, arg: token, modifier: :distinct}, resolve)
-      when is_atom(token) or is_binary(token) do
+  defp to_dynamic_with_resolver(%__MODULE__{op: :count, arg: token, modifier: :distinct}, resolve)
+       when is_atom(token) or is_binary(token) do
     {field, binding} = resolve.(token)
     Ecto.Query.dynamic([{^binding, x}], count(field(x, ^field), :distinct))
   end
 
-  def to_dynamic(%__MODULE__{op: :count, arg: token, modifier: nil}, resolve)
-      when is_atom(token) or is_binary(token) do
+  defp to_dynamic_with_resolver(%__MODULE__{op: :count, arg: token, modifier: nil}, resolve)
+       when is_atom(token) or is_binary(token) do
     {field, binding} = resolve.(token)
     Ecto.Query.dynamic([{^binding, x}], count(field(x, ^field)))
   end
 
-  def to_dynamic(%__MODULE__{op: :avg, arg: token, modifier: nil}, resolve)
-      when is_atom(token) or is_binary(token) do
+  defp to_dynamic_with_resolver(%__MODULE__{op: :avg, arg: token, modifier: nil}, resolve)
+       when is_atom(token) or is_binary(token) do
     {field, binding} = resolve.(token)
     Ecto.Query.dynamic([{^binding, x}], avg(field(x, ^field)))
   end
 
-  def to_dynamic(%__MODULE__{op: :sum, arg: token, modifier: nil}, resolve)
-      when is_atom(token) or is_binary(token) do
+  defp to_dynamic_with_resolver(%__MODULE__{op: :sum, arg: token, modifier: nil}, resolve)
+       when is_atom(token) or is_binary(token) do
     {field, binding} = resolve.(token)
     Ecto.Query.dynamic([{^binding, x}], sum(field(x, ^field)))
   end
 
-  def to_dynamic(%__MODULE__{op: :min, arg: token, modifier: nil}, resolve)
-      when is_atom(token) or is_binary(token) do
+  defp to_dynamic_with_resolver(%__MODULE__{op: :min, arg: token, modifier: nil}, resolve)
+       when is_atom(token) or is_binary(token) do
     {field, binding} = resolve.(token)
     Ecto.Query.dynamic([{^binding, x}], min(field(x, ^field)))
   end
 
-  def to_dynamic(%__MODULE__{op: :max, arg: token, modifier: nil}, resolve)
-      when is_atom(token) or is_binary(token) do
+  defp to_dynamic_with_resolver(%__MODULE__{op: :max, arg: token, modifier: nil}, resolve)
+       when is_atom(token) or is_binary(token) do
     {field, binding} = resolve.(token)
     Ecto.Query.dynamic([{^binding, x}], max(field(x, ^field)))
   end
 
-  def to_dynamic(%__MODULE__{} = aggregate, _resolve) do
+  defp to_dynamic_with_resolver(%__MODULE__{} = aggregate, _resolve) do
     raise ArgumentError, "invalid aggregate expression: #{inspect(aggregate)}"
   end
 
@@ -122,7 +122,7 @@ defmodule QueryBuilder.Aggregate do
     end
 
     op = normalize_operator(operator)
-    agg_dynamic = to_dynamic(aggregate, resolve)
+    agg_dynamic = to_dynamic_with_resolver(aggregate, resolve)
 
     case {op, value} do
       {:eq, nil} ->

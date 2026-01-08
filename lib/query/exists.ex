@@ -3,9 +3,16 @@ defmodule QueryBuilder.Query.Exists do
 
   require Ecto.Query
 
-  def apply_exists(ecto_query, assoc_fields, scope_filters, filters, or_filters, negate?) do
-    source_schema = QueryBuilder.Utils.root_schema(ecto_query)
-
+  def apply_exists(
+        ecto_query,
+        source_schema,
+        assoc_fields,
+        scope_filters,
+        filters,
+        or_filters,
+        negate?
+      )
+      when is_atom(source_schema) do
     subquery =
       source_schema._query()
       |> correlate_to_parent!(source_schema)
@@ -33,12 +40,12 @@ defmodule QueryBuilder.Query.Exists do
     assoc_list =
       QueryBuilder.AssocList.build(
         source_schema,
-        [],
+        QueryBuilder.AssocList.new(source_schema),
         assoc_fields,
         join: :inner
       )
 
-    {ecto_query, assoc_list} = QueryBuilder.JoinMaker.make_joins(ecto_query, assoc_list)
+    ecto_query = QueryBuilder.JoinMaker.make_joins(ecto_query, assoc_list)
 
     ecto_query =
       ecto_query

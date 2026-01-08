@@ -5,36 +5,36 @@ defmodule QueryBuilder.Query.Select do
   import QueryBuilder.Utils
 
   def select(ecto_query, assoc_list, selection) do
-    select_expr = build_select_expr!(ecto_query, assoc_list, selection)
+    select_expr = build_select_expr!(assoc_list, selection)
     Ecto.Query.select(ecto_query, ^select_expr)
   end
 
-  defp build_select_expr!(ecto_query, assoc_list, selection) when is_function(selection, 1) do
-    selection.(&find_field_and_binding_from_token(ecto_query, assoc_list, &1))
+  defp build_select_expr!(assoc_list, selection) when is_function(selection, 1) do
+    selection.(&find_field_and_binding_from_token(assoc_list, &1))
   end
 
-  defp build_select_expr!(ecto_query, assoc_list, %QueryBuilder.Aggregate{} = aggregate) do
-    QueryBuilder.Aggregate.to_dynamic(ecto_query, assoc_list, aggregate)
+  defp build_select_expr!(assoc_list, %QueryBuilder.Aggregate{} = aggregate) do
+    QueryBuilder.Aggregate.to_dynamic(assoc_list, aggregate)
   end
 
-  defp build_select_expr!(ecto_query, assoc_list, selection)
+  defp build_select_expr!(assoc_list, selection)
        when is_atom(selection) or is_binary(selection) do
-    {field, binding} = find_field_and_binding_from_token(ecto_query, assoc_list, selection)
+    {field, binding} = find_field_and_binding_from_token(assoc_list, selection)
     Ecto.Query.dynamic([{^binding, x}], field(x, ^field))
   end
 
-  defp build_select_expr!(ecto_query, assoc_list, selection) when is_tuple(selection) do
-    build_tuple_dynamic!(ecto_query, assoc_list, selection)
+  defp build_select_expr!(assoc_list, selection) when is_tuple(selection) do
+    build_tuple_dynamic!(assoc_list, selection)
   end
 
-  defp build_select_expr!(ecto_query, assoc_list, selection) when is_list(selection) do
+  defp build_select_expr!(assoc_list, selection) when is_list(selection) do
     if Keyword.keyword?(selection) do
       if length(selection) != length(Enum.uniq_by(selection, &elem(&1, 0))) do
         raise ArgumentError,
               "select keyword list contains duplicate keys; got: #{inspect(selection)}"
       end
 
-      build_select_expr!(ecto_query, assoc_list, Map.new(selection))
+      build_select_expr!(assoc_list, Map.new(selection))
     else
       tokens =
         Enum.map(selection, fn token ->
@@ -55,44 +55,44 @@ defmodule QueryBuilder.Query.Select do
       end
 
       selection_map = Enum.reduce(tokens, %{}, fn token, acc -> Map.put(acc, token, token) end)
-      build_select_map_expr!(selection_map, ecto_query, assoc_list)
+      build_select_map_expr!(selection_map, assoc_list)
     end
   end
 
-  defp build_select_expr!(ecto_query, assoc_list, %{} = selection) do
-    build_select_map_expr!(selection, ecto_query, assoc_list)
+  defp build_select_expr!(assoc_list, %{} = selection) do
+    build_select_map_expr!(selection, assoc_list)
   end
 
-  defp build_select_expr!(_ecto_query, _assoc_list, selection) do
+  defp build_select_expr!(_assoc_list, selection) do
     raise ArgumentError,
           "select expects a field token, a list of field tokens, a map, or a 1-arity function; got: #{inspect(selection)}"
   end
 
-  defp build_select_map_expr!(selection, ecto_query, assoc_list) do
+  defp build_select_map_expr!(selection, assoc_list) do
     Enum.reduce(selection, %{}, fn {key, value}, acc ->
-      Map.put(acc, key, build_select_value_expr!(ecto_query, assoc_list, value))
+      Map.put(acc, key, build_select_value_expr!(assoc_list, value))
     end)
   end
 
-  defp build_select_value_expr!(_ecto_query, _assoc_list, {:literal, value}), do: value
+  defp build_select_value_expr!(_assoc_list, {:literal, value}), do: value
 
-  defp build_select_value_expr!(ecto_query, assoc_list, %QueryBuilder.Aggregate{} = aggregate) do
-    QueryBuilder.Aggregate.to_dynamic(ecto_query, assoc_list, aggregate)
+  defp build_select_value_expr!(assoc_list, %QueryBuilder.Aggregate{} = aggregate) do
+    QueryBuilder.Aggregate.to_dynamic(assoc_list, aggregate)
   end
 
-  defp build_select_value_expr!(ecto_query, assoc_list, value) when is_tuple(value) do
-    build_tuple_dynamic!(ecto_query, assoc_list, value)
+  defp build_select_value_expr!(assoc_list, value) when is_tuple(value) do
+    build_tuple_dynamic!(assoc_list, value)
   end
 
-  defp build_select_value_expr!(ecto_query, assoc_list, value)
+  defp build_select_value_expr!(assoc_list, value)
        when is_atom(value) or is_binary(value) do
-    {field, binding} = find_field_and_binding_from_token(ecto_query, assoc_list, value)
+    {field, binding} = find_field_and_binding_from_token(assoc_list, value)
     Ecto.Query.dynamic([{^binding, x}], field(x, ^field))
   end
 
-  defp build_select_value_expr!(_ecto_query, _assoc_list, value), do: value
+  defp build_select_value_expr!(_assoc_list, value), do: value
 
-  defp build_tuple_dynamic!(ecto_query, assoc_list, tuple) do
+  defp build_tuple_dynamic!(assoc_list, tuple) do
     element_dynamics =
       tuple
       |> Tuple.to_list()
@@ -101,17 +101,17 @@ defmodule QueryBuilder.Query.Select do
           dynamic
 
         %QueryBuilder.Aggregate{} = aggregate ->
-          QueryBuilder.Aggregate.to_dynamic(ecto_query, assoc_list, aggregate)
+          QueryBuilder.Aggregate.to_dynamic(assoc_list, aggregate)
 
         {:literal, value} ->
           Ecto.Query.dynamic([], ^value)
 
         element when is_atom(element) or is_binary(element) ->
-          {field, binding} = find_field_and_binding_from_token(ecto_query, assoc_list, element)
+          {field, binding} = find_field_and_binding_from_token(assoc_list, element)
           Ecto.Query.dynamic([{^binding, x}], field(x, ^field))
 
         element when is_tuple(element) ->
-          build_tuple_dynamic!(ecto_query, assoc_list, element)
+          build_tuple_dynamic!(assoc_list, element)
 
         element ->
           Ecto.Query.dynamic([], ^element)
