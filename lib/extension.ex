@@ -82,6 +82,7 @@ defmodule QueryBuilder.Extension do
         to: QueryBuilder
 
       defdelegate left_join_latest(query, assoc_field, opts \\ []), to: QueryBuilder
+      defdelegate left_join_top_n(query, assoc_field, opts \\ []), to: QueryBuilder
 
       defdelegate maybe_where(query, bool, filters), to: QueryBuilder
 

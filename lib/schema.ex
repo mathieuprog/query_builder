@@ -71,6 +71,15 @@ defmodule QueryBuilder.Schema do
         {name, binding}
       end)
 
+    assoc_left_join_top_n_bindings =
+      Enum.map(assocs, fn {name, _struct} ->
+        binding =
+          ("qb__top_n__" <> to_string(env.module) <> "__" <> to_string(name))
+          |> String.to_atom()
+
+        {name, binding}
+      end)
+
     assoc_infos =
       Enum.map(assocs, fn {name, struct} ->
         {name, struct.queryable, struct.cardinality}
@@ -87,6 +96,13 @@ defmodule QueryBuilder.Schema do
       for {assoc_field, binding} <- assoc_latest_bindings do
         quote do
           def _latest_binding(unquote(assoc_field)), do: unquote(binding)
+        end
+      end
+
+    left_join_top_n_binding_clauses =
+      for {assoc_field, binding} <- assoc_left_join_top_n_bindings do
+        quote do
+          def _top_n_binding(unquote(assoc_field)), do: unquote(binding)
         end
       end
 
@@ -144,6 +160,14 @@ defmodule QueryBuilder.Schema do
       unquote_splicing(latest_binding_clauses)
 
       def _latest_binding(assoc_field) do
+        raise ArgumentError,
+              "unknown association #{inspect(assoc_field)} for #{inspect(__MODULE__)}; " <>
+                "available associations: #{inspect(__schema__(:associations))}"
+      end
+
+      unquote_splicing(left_join_top_n_binding_clauses)
+
+      def _top_n_binding(assoc_field) do
         raise ArgumentError,
               "unknown association #{inspect(assoc_field)} for #{inspect(__MODULE__)}; " <>
                 "available associations: #{inspect(__schema__(:associations))}"

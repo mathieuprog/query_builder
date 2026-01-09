@@ -1121,8 +1121,12 @@ defmodule QueryBuilder do
 
   def select(%QueryBuilder.Query{} = query, assoc_fields, selection) do
     if Enum.any?(query.operations, fn
-         {type, _assocs, _args} when type in [:select, :select_merge, :left_join_latest] -> true
-         _ -> false
+         {type, _assocs, _args}
+         when type in [:select, :select_merge, :left_join_latest, :left_join_top_n] ->
+           true
+
+         _ ->
+           false
        end) do
       raise ArgumentError,
             "only one select expression is allowed in query; " <>
@@ -1173,12 +1177,12 @@ defmodule QueryBuilder do
 
   def select_merge(%QueryBuilder.Query{} = query, assoc_fields, selection) do
     if Enum.any?(query.operations, fn
-         {:left_join_latest, _assocs, _args} -> true
+         {type, _assocs, _args} when type in [:left_join_latest, :left_join_top_n] -> true
          _ -> false
        end) do
       raise ArgumentError,
-            "select_merge/* cannot be combined with left_join_latest/3; " <>
-              "left_join_latest sets a custom select (`{root, assoc}`), so select_merge is not supported"
+            "select_merge/* cannot be combined with left_join_latest/3 or left_join_top_n/3; " <>
+              "these functions set a custom select (`{root, assoc}`), so select_merge is not supported"
     end
 
     %{
@@ -2362,12 +2366,16 @@ defmodule QueryBuilder do
   def left_join_latest(%QueryBuilder.Query{} = query, assoc_field, opts)
       when is_atom(assoc_field) and is_list(opts) do
     if Enum.any?(query.operations, fn
-         {type, _assocs, _args} when type in [:select, :select_merge, :left_join_latest] -> true
-         _ -> false
+         {type, _assocs, _args}
+         when type in [:select, :select_merge, :left_join_latest, :left_join_top_n] ->
+           true
+
+         _ ->
+           false
        end) do
       raise ArgumentError,
             "only one select expression is allowed in query; " <>
-              "call `left_join_latest/3` at most once and avoid mixing it with `select/*` or `select_merge/*`"
+              "call `left_join_latest/3` at most once and avoid mixing it with `select/*`, `select_merge/*`, or `left_join_top_n/3`"
     end
 
     %{
@@ -2386,6 +2394,77 @@ defmodule QueryBuilder do
   def left_join_latest(_query, assoc_field, _opts) do
     raise ArgumentError,
           "left_join_latest/3 expects `assoc_field` to be an atom (direct association), got: #{inspect(assoc_field)}"
+  end
+
+  @doc ~S"""
+  Left-joins the top N rows of a `has_many` association and selects `{root, assoc}`.
+
+  This is a helper for “parent rows + top N child rows joined”, returning multiple
+  `{parent, child}` rows per parent.
+
+  Postgres-only: emits `LEFT JOIN LATERAL (...) LIMIT n`.
+
+  Supported options:
+  - `n:` (required) - a positive integer (applied as a `LIMIT` in the assoc subquery)
+  - `order_by:` (required) - a keyword list like `order_by/2` (applied in the assoc subquery)
+  - `where:` (optional) - filters like `where/2` (applied in the assoc subquery)
+  - `child_assoc_fields:` (optional) - assoc tree to join inside the assoc subquery (to support tokens like `field@assoc`)
+
+  Notes:
+  - Only supports a single, direct `has_many` association (no nested paths).
+  - The `order_by:` must include the assoc schema primary key fields as a tie-breaker.
+  - This multiplies parent rows (up to `n` rows per parent).
+  - This sets a custom select (`{root, assoc}`), so it cannot be used with `paginate/3`.
+
+  Example:
+  ```elixir
+  User
+  |> QueryBuilder.left_join_top_n(:authored_articles, n: 3, order_by: [desc: :inserted_at, desc: :id])
+  |> Repo.all()
+  # => [{%User{}, %Article{} | nil}, ...]
+  ```
+  """
+  def left_join_top_n(query, assoc_field, opts \\ [])
+
+  def left_join_top_n(_query, nil, _opts) do
+    raise ArgumentError, "left_join_top_n/3 expects an association field, got nil"
+  end
+
+  def left_join_top_n(_query, _assoc_field, nil) do
+    raise ArgumentError, "left_join_top_n/3 expects opts to be a keyword list, got nil"
+  end
+
+  def left_join_top_n(%QueryBuilder.Query{} = query, assoc_field, opts)
+      when is_atom(assoc_field) and is_list(opts) do
+    if Enum.any?(query.operations, fn
+         {type, _assocs, _args}
+         when type in [:select, :select_merge, :left_join_latest, :left_join_top_n] ->
+           true
+
+         _ ->
+           false
+       end) do
+      raise ArgumentError,
+            "only one select expression is allowed in query; " <>
+              "call `left_join_top_n/3` at most once and avoid mixing it with `select/*`, `select_merge/*`, or `left_join_latest/3`"
+    end
+
+    %{
+      query
+      | operations: [
+          {:left_join_top_n, [], [assoc_field, opts]} | query.operations
+        ]
+    }
+  end
+
+  def left_join_top_n(query, assoc_field, opts) when is_atom(assoc_field) and is_list(opts) do
+    ecto_query = ensure_query_has_binding(query)
+    left_join_top_n(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_field, opts)
+  end
+
+  def left_join_top_n(_query, assoc_field, _opts) do
+    raise ArgumentError,
+          "left_join_top_n/3 expects `assoc_field` to be an atom (direct association), got: #{inspect(assoc_field)}"
   end
 
   @doc ~S"""
@@ -2433,6 +2512,7 @@ defmodule QueryBuilder do
     :left_join,
     :left_join_leaf,
     :left_join_latest,
+    :left_join_top_n,
     :left_join_path,
     :limit,
     :maybe_order_by,

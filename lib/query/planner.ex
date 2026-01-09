@@ -13,6 +13,7 @@ defmodule QueryBuilder.Query.Planner do
   alias QueryBuilder.Query.GroupBy
   alias QueryBuilder.Query.Having
   alias QueryBuilder.Query.LeftJoinLatest
+  alias QueryBuilder.Query.LeftJoinTopN
   alias QueryBuilder.Query.Limit
   alias QueryBuilder.Query.Offset
   alias QueryBuilder.Query.OrderBy
@@ -280,6 +281,10 @@ defmodule QueryBuilder.Query.Planner do
     LeftJoinLatest.left_join_latest(ecto_query, assoc_list, assoc_field, opts)
   end
 
+  defp apply_operation(ecto_query, {:left_join_top_n, _assocs, [assoc_field, opts]}, assoc_list) do
+    LeftJoinTopN.left_join_top_n(ecto_query, assoc_list, assoc_field, opts)
+  end
+
   defp apply_operation(_ecto_query, {type, _assocs, args}, _assoc_list) do
     raise ArgumentError,
           "internal error: unknown query operation #{inspect(type)} with args #{inspect(args)}"
@@ -290,8 +295,12 @@ defmodule QueryBuilder.Query.Planner do
       operations
       |> Enum.with_index()
       |> Enum.flat_map(fn
-        {{type, _assocs, _args}, index} when type in [:select, :left_join_latest] -> [index]
-        {_op, _index} -> []
+        {{type, _assocs, _args}, index}
+        when type in [:select, :left_join_latest, :left_join_top_n] ->
+          [index]
+
+        {_op, _index} ->
+          []
       end)
 
     case select_indexes do
@@ -305,7 +314,7 @@ defmodule QueryBuilder.Query.Planner do
            end) do
           raise ArgumentError,
                 "only one select expression is allowed in query; " <>
-                  "calling `select/*` (or `left_join_latest/3`) after `select_merge/*` is not supported (Ecto semantics)"
+                  "calling `select/*` (or `left_join_latest/3` / `left_join_top_n/3`) after `select_merge/*` is not supported (Ecto semantics)"
         end
 
         :ok
@@ -313,7 +322,7 @@ defmodule QueryBuilder.Query.Planner do
       _many ->
         raise ArgumentError,
               "only one select expression is allowed in query; " <>
-                "call `select/*` (or `left_join_latest/3`) at most once and use `select_merge/*` to add fields"
+                "call `select/*` (or `left_join_latest/3` / `left_join_top_n/3`) at most once and use `select_merge/*` to add fields"
     end
   end
 end
