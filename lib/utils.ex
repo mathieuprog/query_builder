@@ -19,6 +19,10 @@ defmodule QueryBuilder.Utils do
     end
   end
 
+  def root_schema(%{__struct__: QueryBuilder.Query, ecto_query: ecto_query}) do
+    root_schema(ecto_query)
+  end
+
   def root_schema(%Ecto.Query{} = query) do
     do_root_schema(query)
   end

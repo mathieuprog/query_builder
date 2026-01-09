@@ -1878,6 +1878,15 @@ defmodule QueryBuilderTest do
     end
   end
 
+  test "root_schema/1 does not compile QueryBuilder.Query" do
+    query = %QueryBuilder.Query{
+      ecto_query: User,
+      operations: [{:unknown_operation, [], []}]
+    }
+
+    assert QueryBuilder.Utils.root_schema(query) == User
+  end
+
   test "existing Ecto.Query inputs get the expected root named binding added (non-destructive)" do
     base_query =
       from(u in User,
