@@ -47,8 +47,7 @@ defmodule QueryBuilder.MixProject do
     [
       test: [
         "ecto.create --quiet",
-        "ecto.rollback --all",
-        "ecto.migrate",
+        "ecto.migrate --quiet",
         "test"
       ]
     ]
