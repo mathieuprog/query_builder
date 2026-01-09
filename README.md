@@ -46,7 +46,7 @@ end
 
 QueryBuilder lets you express complex filtering and composition as plain Elixir data, without positional binding gymnastics and without manually building `dynamic/2` trees for the common cases.
 
-QueryBuilder lets you express “OR of AND groups” directly as nested lists:
+For example, QueryBuilder lets you express “OR of AND groups” directly as nested lists:
 
 ```elixir
 # (name == "Alice") OR (name == "Bob" AND deleted == false)
