@@ -98,6 +98,15 @@ User
 |> Repo.all()
 ```
 
+Implicit joins created by QueryBuilder default to `LEFT`. If an association must exist, use a `!` join marker in `assoc_fields` (e.g. `:role!`) or call `inner_join/2` explicitly.
+
+```elixir
+# Only users that have a role named "admin"
+User
+|> QueryBuilder.where(:role!, name@role: "admin")
+|> Repo.all()
+```
+
 ### Rich Filter DSL (Operators + Field Comparisons)
 
 Beyond `{field, value}` equality, you can use `{field, operator, value}` for common operators (ranges, membership, text search). For field-to-field comparisons, use the `@self` marker as the value.
