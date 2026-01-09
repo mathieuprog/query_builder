@@ -8,7 +8,6 @@ QueryBuilder is a thin layer over Ecto that builds composable queries from plain
 - [Setup](#setup)
 - [Feature Overview](#feature-overview)
 - [Examples](#examples)
-- [Documentation](#documentation)
 
 ## Key Features
 
