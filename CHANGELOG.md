@@ -75,7 +75,7 @@ def list_users_with_published_article(tenant_id, opts \\ []) do
     )
     |> QueryBuilder.from_opts(qb_opts)
 
-  if :authored_articles in include do
+  if :published_authored_articles in include do
     QueryBuilder.preload_separate_scoped(query, :authored_articles,
       where: [tenant_id: tenant_id, published: true],
       order_by: [desc: :inserted_at]
