@@ -39,9 +39,11 @@ def list_users_with_published_article(tenant_id, opts \\ []) do
 end
 ```
 
-If boundary allowed to preload `:authored_articles`, this call would be surprising / potentially unsafe, because a preload would run a second query like “load all authored_articles for these users”, and that query does not inherit the EXISTS predicate. So Alice would be returned with A, B, and C (including unpublished and other-tenant rows). The root query only guarantees “at least one matching article exists”, not “the preloaded association is limited to `tenant_id = 1` and `published = true`”, so the result depends on how the context query was implemented.
+If boundary allowed preloading `:authored_articles`, the meaning would be ambiguous: does the caller want all `authored_articles`, or only the ones matching the context’s “published in tenant 1” constraint? A separate preload always loads the full association for the returned users, so Alice would come back with A, B, and C (including unpublished and other-tenant rows). If we instead tried to preload the filtered subset through joins, the outcome would depend on how the context built the base query (scoped JOIN vs EXISTS).
 
-Alternative: expose explicit `include` options handled inside the context (strategy + scope is part of the context contract):
+Because external callers shouldn’t need to know those implementation details, preloading should be handled via explicit context-owned include options (full vs scoped). The caller can then make intent explicit by requesting `include: [:authored_articles_all]` vs `include: [:authored_articles_published]` (or whatever include names the context exposes).
+
+Examples of exposing explicit `include` options handled inside the context (strategy + scope is part of the context contract):
 
 ```elixir
 def list_users(tenant_id, opts \\ []) do
