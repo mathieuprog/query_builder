@@ -47,8 +47,7 @@ Examples of exposing explicit `include` options handled inside the context (stra
 
 ```elixir
 def list_users(tenant_id, opts \\ []) do
-  include = Keyword.get(opts, :include, [])
-  qb_opts = Keyword.drop(opts, [:include])
+  {include, qb_opts} = Keyword.pop(opts, :include, [])
 
   query =
     User
@@ -66,8 +65,7 @@ def list_users(tenant_id, opts \\ []) do
 end
 
 def list_users_with_published_article(tenant_id, opts \\ []) do
-  include = Keyword.get(opts, :include, [])
-  qb_opts = Keyword.drop(opts, [:include])
+  {include, qb_opts} = Keyword.pop(opts, :include, [])
 
   query =
     User
@@ -93,8 +91,7 @@ If the association selection depends on parent fields (correlated predicates), u
 
 ```elixir
 def list_users_having_featured_article(tenant_id, opts \\ []) do
-  include = Keyword.get(opts, :include, [])
-  qb_opts = Keyword.drop(opts, [:include])
+  {include, qb_opts} = Keyword.pop(opts, :include, [])
 
   featured_filters = [
     tenant_id@authored_articles: tenant_id,
