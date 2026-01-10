@@ -150,6 +150,7 @@ If you need “association must exist”, make it explicit with `inner_join/2` o
 - `left_join_top_n/3`: left-join the top N `has_many` rows per parent and select `{root, assoc}`.
 - Full-path tokens (`field@assoc@nested_assoc...`): disambiguate in case of ambiguity.
 - Join markers (`:assoc?` / `:assoc!`): declare optional vs required association joins (`LEFT` vs `INNER`).
+- `paginate/3` is now an alias for `paginate_cursor/3`; offset/row pagination is `paginate_offset/3`.
 
 ### Bug fixes
 
