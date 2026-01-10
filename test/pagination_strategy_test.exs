@@ -19,6 +19,11 @@ defmodule QueryBuilder.PaginationStrategyTest do
     end)
   end
 
+  defp query_has_join?(metadata) when is_map(metadata) do
+    query = to_string(metadata[:query] || "")
+    String.contains?(query, " JOIN ")
+  end
+
   defp normalize_ids_param(ids) when is_list(ids), do: ids
   defp normalize_ids_param(id) when is_integer(id), do: [id]
 
@@ -102,7 +107,7 @@ defmodule QueryBuilder.PaginationStrategyTest do
       assert Enum.sort(normalize_ids_param(user_ids_param)) == [first.id]
     end
 
-    test "falls back to ids-first when order_by depends on a to-one assoc token and the assoc is not preloaded" do
+    test "uses a single root query when order_by depends on a to-one assoc token (cursor projection)" do
       role_a = insert(:role, %{name: "CursorRoleA"})
       role_b = insert(:role, %{name: "CursorRoleB"})
 
@@ -119,7 +124,7 @@ defmodule QueryBuilder.PaginationStrategyTest do
       assert first.id == u1.id
       refute Ecto.assoc_loaded?(first.role)
 
-      assert length(queries_for_from_table(queries, "users")) == 2
+      assert length(queries_for_from_table(queries, "users")) == 1
       assert queries_for_from_table(queries, "roles") == []
 
       cursor_map = decode_cursor(page.cursor_for_entries_after)
@@ -192,7 +197,11 @@ defmodule QueryBuilder.PaginationStrategyTest do
       assert page.has_more_entries == true
       assert first.id == u1.id
 
-      assert length(queries_for_from_table(queries, "users")) == 2
+      users_queries = queries_for_from_table(queries, "users")
+      assert length(users_queries) == 2
+
+      # keys query keeps joins; load query is join-free (reload by PK list)
+      assert Enum.count(users_queries, &query_has_join?/1) == 1
 
       %{paginated_entries: [second]} =
         QB.paginate(query, Repo,
@@ -202,6 +211,33 @@ defmodule QueryBuilder.PaginationStrategyTest do
         )
 
       assert second.id == u2.id
+    end
+
+    test "keeps joins in keys-first load when a to-many through-join preload is present" do
+      u1 = insert(:user, %{nickname: "CursorThroughJoin1"})
+      _ = insert(:article, author: u1, publisher: u1, title: "CursorThroughJoinA1")
+      _ = insert(:article, author: u1, publisher: u1, title: "CursorThroughJoinA2")
+
+      query =
+        User
+        |> QB.inner_join(:authored_articles)
+        |> QB.preload_through_join(:authored_articles)
+        |> QB.order_by(asc: :id)
+
+      {%{paginated_entries: [first]}, queries} =
+        with_repo_queries(fn ->
+          QB.paginate(query, Repo, page_size: 1, cursor: nil, direction: :after)
+        end)
+
+      assert first.id == u1.id
+      assert Ecto.assoc_loaded?(first.authored_articles)
+      assert first.authored_articles != []
+
+      users_queries = queries_for_from_table(queries, "users")
+      assert length(users_queries) == 2
+
+      # both keys and load queries must keep joins to preserve join-preload semantics
+      assert Enum.count(users_queries, &query_has_join?/1) == 2
     end
   end
 
@@ -258,7 +294,10 @@ defmodule QueryBuilder.PaginationStrategyTest do
 
       assert queries_for_from_table(queries, "articles") == []
       assert page.has_more_entries == false
-      assert length(queries_for_from_table(queries, "users")) == 2
+      users_queries = queries_for_from_table(queries, "users")
+      assert length(users_queries) == 2
+
+      assert Enum.count(users_queries, &query_has_join?/1) == 2
     end
 
     test "uses keys-first when to-many joins are present (unique roots across offsets)" do
@@ -284,7 +323,11 @@ defmodule QueryBuilder.PaginationStrategyTest do
       assert first.id == u1.id
       assert page1.has_more_entries == true
 
-      assert length(queries_for_from_table(queries, "users")) == 2
+      users_queries = queries_for_from_table(queries, "users")
+      assert length(users_queries) == 2
+
+      # keys query keeps joins; load query is join-free (reload by PK list)
+      assert Enum.count(users_queries, &query_has_join?/1) == 1
       assert queries_for_from_table(queries, "articles") == []
 
       %{paginated_entries: [second], pagination: page2} =

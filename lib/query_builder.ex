@@ -42,6 +42,8 @@ defmodule QueryBuilder do
     paginate_cursor(query, repo, opts)
   end
 
+  @cursor_projection_root_key :__qb__cursor_projection_root__
+
   def paginate_cursor(%QueryBuilder.Query{} = query, repo, opts \\ []) do
     if Keyword.has_key?(opts, :unsafe_sql_row_pagination?) do
       raise ArgumentError,
@@ -208,13 +210,15 @@ defmodule QueryBuilder do
 
       ensure_paginate_select_is_root!(ecto_query)
 
+      cursor_fields_extractable? =
+        cursor_fields_extractable_from_entries?(root_schema, assoc_list, order_by_list)
+
+      only_to_one_assoc_joins? = only_to_one_assoc_joins?(ecto_query, root_schema)
+
       {entries, first_row_cursor_map, last_row_cursor_map, has_more?} =
-        if single_query_cursor_pagination_possible?(
-             ecto_query,
-             assoc_list,
-             order_by_list,
-             base_query_has_preloads?
-           ) do
+        if cursor_fields_extractable? and
+             only_to_one_assoc_joins? and
+             (not base_query_has_preloads? or not has_to_many_preloads?(assoc_list)) do
           {page_ecto_query, deferred_preloads} =
             if base_query_has_preloads? do
               {ecto_query, []}
@@ -235,39 +239,84 @@ defmodule QueryBuilder do
           {entries, cursor_map_from_entry(first_entry, order_by_list),
            cursor_map_from_entry(last_entry, order_by_list), has_more?}
         else
+          projection_pagination_possible? =
+            not base_query_has_preloads? and only_to_one_assoc_joins? and
+              not cursor_fields_extractable? and not has_through_join_preloads?(assoc_list)
+
           cursor_select_map = build_cursor_select_map(assoc_list, order_by_list)
 
-          page_keys_query =
-            ecto_query
-            |> Query.exclude([:preload, :select])
-            |> Ecto.Query.select([{^root_schema, x}], ^cursor_select_map)
-            |> Ecto.Query.distinct(true)
+          if projection_pagination_possible? do
+            {page_ecto_query, deferred_preloads} =
+              QueryBuilder.Query.Preload.split_for_pagination(ecto_query, assoc_list)
 
-          page_key_rows_all = repo.all(page_keys_query)
+            if page_ecto_query.preloads != [] or page_ecto_query.assocs != [] do
+              raise ArgumentError,
+                    "paginate_cursor/3 internal error: cursor projection pagination cannot be combined with through-join preloads"
+            end
 
-          keys_all =
-            Enum.map(page_key_rows_all, &primary_key_value_from_row(&1, primary_key_fields))
+            root_value_expr = Ecto.Query.dynamic([{^root_schema, x}], x)
 
-          if length(keys_all) != length(Enum.uniq(keys_all)) do
-            raise ArgumentError,
-                  "paginate_cursor/3 could not produce a page of unique root rows; " <>
-                    "this usually means your order_by depends on a to-many join (e.g. ordering by a has_many field). " <>
-                    "Use an aggregation (e.g. max/min) or order by root/to-one fields only. " <>
-                    "order_by: #{inspect(order_by_list)}"
+            projection_select_map =
+              cursor_select_map
+              |> Map.put(@cursor_projection_root_key, root_value_expr)
+
+            rows_all =
+              page_ecto_query
+              |> Ecto.Query.select([{^root_schema, _x}], ^projection_select_map)
+              |> repo.all()
+              |> Enum.map(fn row ->
+                {
+                  Map.fetch!(row, @cursor_projection_root_key),
+                  Map.delete(row, @cursor_projection_root_key)
+                }
+              end)
+
+            keys_all =
+              Enum.map(rows_all, fn {entry, _cursor_map} ->
+                primary_key_value_from_entry(entry, primary_key_fields)
+              end)
+
+            ensure_paginate_cursor_root_keys_unique!(keys_all, order_by_list)
+
+            {rows, has_more?} = normalize_paginated_rows(rows_all, page_size, cursor_direction)
+
+            entries = Enum.map(rows, &elem(&1, 0))
+            entries = maybe_apply_deferred_preloads(repo, entries, deferred_preloads)
+
+            first_row = List.first(rows)
+            last_row = List.last(rows)
+
+            first_row_cursor_map = if is_nil(first_row), do: nil, else: elem(first_row, 1)
+            last_row_cursor_map = if is_nil(last_row), do: nil, else: elem(last_row, 1)
+
+            {entries, first_row_cursor_map, last_row_cursor_map, has_more?}
+          else
+            page_keys_query =
+              ecto_query
+              |> Query.exclude([:preload, :select])
+              |> Ecto.Query.select([{^root_schema, x}], ^cursor_select_map)
+              |> Ecto.Query.distinct(true)
+
+            page_key_rows_all = repo.all(page_keys_query)
+
+            keys_all =
+              Enum.map(page_key_rows_all, &primary_key_value_from_row(&1, primary_key_fields))
+
+            ensure_paginate_cursor_root_keys_unique!(keys_all, order_by_list)
+
+            {page_key_rows, has_more?} =
+              normalize_paginated_rows(page_key_rows_all, page_size, cursor_direction)
+
+            keys = Enum.map(page_key_rows, &primary_key_value_from_row(&1, primary_key_fields))
+
+            entries =
+              load_entries_for_page(repo, ecto_query, root_schema, primary_key_fields, keys)
+
+            first_row = List.first(page_key_rows)
+            last_row = List.last(page_key_rows)
+
+            {entries, first_row, last_row, has_more?}
           end
-
-          {page_key_rows, has_more?} =
-            normalize_paginated_rows(page_key_rows_all, page_size, cursor_direction)
-
-          keys = Enum.map(page_key_rows, &primary_key_value_from_row(&1, primary_key_fields))
-
-          entries =
-            load_entries_for_page(repo, ecto_query, root_schema, primary_key_fields, keys)
-
-          first_row = List.first(page_key_rows)
-          last_row = List.last(page_key_rows)
-
-          {entries, first_row, last_row, has_more?}
         end
 
       build_cursor = fn
@@ -546,19 +595,6 @@ defmodule QueryBuilder do
     end
   end
 
-  defp single_query_cursor_pagination_possible?(
-         ecto_query,
-         assoc_list,
-         order_by_list,
-         base_query_has_preloads?
-       ) do
-    root_schema = assoc_list.root_schema
-
-    cursor_fields_extractable_from_entries?(root_schema, assoc_list, order_by_list) and
-      only_to_one_assoc_joins?(ecto_query, root_schema) and
-      (not base_query_has_preloads? or not has_to_many_preloads?(assoc_list))
-  end
-
   defp cursor_fields_extractable_from_entries?(root_schema, assoc_list, order_by_list)
        when is_atom(root_schema) do
     Enum.all?(order_by_list, fn {_direction, token} ->
@@ -627,6 +663,31 @@ defmodule QueryBuilder do
     QueryBuilder.AssocList.any?(assoc_list, fn assoc_data ->
       assoc_data.preload_spec != nil and assoc_data.cardinality == :many
     end)
+  end
+
+  defp has_through_join_preloads?(%QueryBuilder.AssocList{} = assoc_list) do
+    QueryBuilder.AssocList.any?(assoc_list, fn
+      %QueryBuilder.AssocList.Node{
+        preload_spec: %QueryBuilder.AssocList.PreloadSpec{strategy: :through_join}
+      } ->
+        true
+
+      _ ->
+        false
+    end)
+  end
+
+  defp ensure_paginate_cursor_root_keys_unique!(keys_all, order_by_list)
+       when is_list(keys_all) and is_list(order_by_list) do
+    if length(keys_all) != length(Enum.uniq(keys_all)) do
+      raise ArgumentError,
+            "paginate_cursor/3 could not produce a page of unique root rows; " <>
+              "this usually means your order_by depends on a to-many join (e.g. ordering by a has_many field). " <>
+              "Use an aggregation (e.g. max/min) or order by root/to-one fields only. " <>
+              "order_by: #{inspect(order_by_list)}"
+    end
+
+    :ok
   end
 
   defp cursor_map_from_entry(nil, _order_by_list), do: nil
@@ -700,10 +761,48 @@ defmodule QueryBuilder do
     |> List.to_tuple()
   end
 
+  defp primary_key_value_from_entry(entry, [pk_field]) do
+    Map.fetch!(entry, pk_field)
+  end
+
+  defp primary_key_value_from_entry(entry, pk_fields) when is_list(pk_fields) do
+    pk_fields
+    |> Enum.map(&Map.fetch!(entry, &1))
+    |> List.to_tuple()
+  end
+
+  defp strip_for_keys_first_entries_load(%Ecto.Query{} = ecto_query) do
+    # In keys-first pagination, the keys query already applied all filters/joins needed to
+    # decide membership + ordering. When we reload by PK list, we can often drop the join
+    # graph (which avoids join multiplication and can be significantly cheaper).
+    #
+    # This is only safe when the final query does not contain join-preloads (assocs), since
+    # those require the join semantics to hydrate associations.
+    Query.exclude(ecto_query, [
+      :join,
+      :where,
+      :group_by,
+      :having,
+      :distinct,
+      :windows,
+      :select
+    ])
+  end
+
+  defp maybe_strip_for_keys_first_entries_load(%Ecto.Query{assocs: []} = ecto_query) do
+    strip_for_keys_first_entries_load(ecto_query)
+  end
+
+  defp maybe_strip_for_keys_first_entries_load(%Ecto.Query{} = ecto_query) do
+    ecto_query
+  end
+
   defp load_entries_for_page(_repo, _ecto_query, _source_schema, _pk_fields, []), do: []
 
   defp load_entries_for_page(repo, ecto_query, source_schema, [pk_field], keys)
        when is_list(keys) do
+    ecto_query = maybe_strip_for_keys_first_entries_load(ecto_query)
+
     entries_query =
       ecto_query
       |> Query.exclude([:limit, :offset, :order_by])
@@ -731,6 +830,8 @@ defmodule QueryBuilder do
 
   defp load_entries_for_page(repo, ecto_query, source_schema, pk_fields, keys)
        when is_list(pk_fields) and length(pk_fields) > 1 and is_list(keys) do
+    ecto_query = maybe_strip_for_keys_first_entries_load(ecto_query)
+
     dynamic_keys =
       Enum.map(keys, fn key ->
         key_parts =
