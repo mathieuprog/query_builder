@@ -162,6 +162,8 @@ pagination_opts =
   |> QueryBuilder.paginate(Repo, pagination_opts)
 ```
 
+`paginate/3` is an alias for `paginate_cursor/3`. For offset/row pagination (no cursor), use `paginate_offset/3`.
+
 ### Higher‑Level Query Helpers
 
 QueryBuilder also includes higher-level helpers that are verbose to write correctly in raw Ecto.

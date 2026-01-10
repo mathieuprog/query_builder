@@ -469,7 +469,7 @@ defmodule QueryBuilder.TopNPerAndLateralJoinsTest do
 
     test "cannot be used with paginate/3 (custom select {root, assoc})" do
       assert_raise ArgumentError,
-                   ~r/paginate\/3 does not support custom select expressions/i,
+                   ~r/paginate_cursor\/3 and paginate_offset\/3 do not support custom select expressions/i,
                    fn ->
                      User
                      |> QueryBuilder.left_join_latest(:authored_articles, order_by: [desc: :id])
@@ -764,7 +764,7 @@ defmodule QueryBuilder.TopNPerAndLateralJoinsTest do
 
     test "cannot be used with paginate/3 (custom select {root, assoc})" do
       assert_raise ArgumentError,
-                   ~r/paginate\/3 does not support custom select expressions/i,
+                   ~r/paginate_cursor\/3 and paginate_offset\/3 do not support custom select expressions/i,
                    fn ->
                      User
                      |> QueryBuilder.left_join_top_n(:authored_articles,

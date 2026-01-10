@@ -1,6 +1,7 @@
 defmodule QueryBuilderTest do
   use ExUnit.Case
   import QueryBuilder.Factory
+  import QueryBuilder.RepoTelemetryHelpers, only: [with_repo_query_count: 1]
   alias QueryBuilder.{Repo, User, Article, Event, CustomPkUser, CompositeUser}
   require Ecto.Query
   import Ecto.Query
@@ -145,72 +146,6 @@ defmodule QueryBuilderTest do
     end
 
     :ok
-  end
-
-  defp with_repo_query_count(fun) when is_function(fun, 0) do
-    parent = self()
-    handler_id = "repo-query-count-#{System.unique_integer([:positive])}"
-
-    :telemetry.attach(
-      handler_id,
-      [:query_builder, :repo, :query],
-      fn _event, _measurements, _metadata, parent ->
-        send(parent, {:repo_query, handler_id})
-      end,
-      parent
-    )
-
-    result =
-      try do
-        fun.()
-      after
-        :telemetry.detach(handler_id)
-      end
-
-    {result, drain_repo_query_messages(handler_id)}
-  end
-
-  defp drain_repo_query_messages(handler_id, count \\ 0) do
-    receive do
-      {:repo_query, ^handler_id} ->
-        drain_repo_query_messages(handler_id, count + 1)
-    after
-      0 ->
-        count
-    end
-  end
-
-  defp with_repo_queries(fun) when is_function(fun, 0) do
-    parent = self()
-    handler_id = "repo-queries-#{System.unique_integer([:positive])}"
-
-    :telemetry.attach(
-      handler_id,
-      [:query_builder, :repo, :query],
-      fn _event, _measurements, metadata, parent ->
-        send(parent, {:repo_query, handler_id, metadata})
-      end,
-      parent
-    )
-
-    result =
-      try do
-        fun.()
-      after
-        :telemetry.detach(handler_id)
-      end
-
-    {result, drain_repo_query_metadata(handler_id)}
-  end
-
-  defp drain_repo_query_metadata(handler_id, acc \\ []) do
-    receive do
-      {:repo_query, ^handler_id, metadata} ->
-        drain_repo_query_metadata(handler_id, [metadata | acc])
-    after
-      0 ->
-        Enum.reverse(acc)
-    end
   end
 
   test "where" do
@@ -2038,81 +1973,7 @@ defmodule QueryBuilderTest do
     assert query_count == 2
   end
 
-  test "cursor pagination avoids preloading the sentinel row for to-many preloads (uses ids-first)" do
-    query =
-      User
-      |> QueryBuilder.preload_separate(:authored_articles)
-      |> QueryBuilder.order_by(asc: :nickname)
-
-    {%{paginated_entries: [first]}, queries} =
-      with_repo_queries(fn ->
-        QueryBuilder.paginate(query, Repo, page_size: 1, cursor: nil, direction: :after)
-      end)
-
-    assert Ecto.assoc_loaded?(first.authored_articles)
-
-    preload_queries =
-      Enum.filter(queries, fn metadata ->
-        query = to_string(metadata[:query] || "")
-        String.contains?(query, ~s(FROM "articles"))
-      end)
-
-    assert [preload_query] = preload_queries
-
-    [user_ids_param] = preload_query[:params]
-
-    user_ids =
-      case user_ids_param do
-        ids when is_list(ids) -> ids
-        id when is_integer(id) -> [id]
-      end
-
-    assert Enum.sort(user_ids) == [first.id]
-  end
-
-  test "unsafe SQL-row pagination avoids preloading the sentinel row when preloads are present" do
-    character_length = fn field, get_binding_fun ->
-      {field, binding} = get_binding_fun.(field)
-      Ecto.Query.dynamic([{^binding, x}], fragment("character_length(?)", field(x, ^field)))
-    end
-
-    query =
-      User
-      |> QueryBuilder.preload_separate(:authored_articles)
-      |> QueryBuilder.order_by(asc: &character_length.(:nickname, &1))
-
-    {%{paginated_entries: [first]}, queries} =
-      with_repo_queries(fn ->
-        QueryBuilder.paginate(query, Repo,
-          page_size: 1,
-          cursor: nil,
-          direction: :after,
-          unsafe_sql_row_pagination?: true
-        )
-      end)
-
-    assert Ecto.assoc_loaded?(first.authored_articles)
-
-    preload_queries =
-      Enum.filter(queries, fn metadata ->
-        query = to_string(metadata[:query] || "")
-        String.contains?(query, ~s(FROM "articles"))
-      end)
-
-    assert [preload_query] = preload_queries
-
-    [user_ids_param] = preload_query[:params]
-
-    user_ids =
-      case user_ids_param do
-        ids when is_list(ids) -> ids
-        id when is_integer(id) -> [id]
-      end
-
-    assert Enum.sort(user_ids) == [first.id]
-  end
-
-  test "unsafe SQL-row pagination preserves offset semantics when preloads are present" do
+  test "paginate_offset preserves offset semantics when preloads are present" do
     character_length = fn field, get_binding_fun ->
       {field, binding} = get_binding_fun.(field)
       Ecto.Query.dynamic([{^binding, x}], fragment("character_length(?)", field(x, ^field)))
@@ -2124,42 +1985,18 @@ defmodule QueryBuilderTest do
       |> QueryBuilder.order_by(asc: &character_length.(:nickname, &1))
 
     %{paginated_entries: [without_preload]} =
-      QueryBuilder.paginate(base_query, Repo,
-        page_size: 1,
-        cursor: nil,
-        direction: :after,
-        unsafe_sql_row_pagination?: true
-      )
+      QueryBuilder.paginate_offset(base_query, Repo, page_size: 1)
 
     %{paginated_entries: [with_preload]} =
       base_query
       |> QueryBuilder.preload_separate(:authored_articles)
-      |> QueryBuilder.paginate(Repo,
-        page_size: 1,
-        cursor: nil,
-        direction: :after,
-        unsafe_sql_row_pagination?: true
-      )
+      |> QueryBuilder.paginate_offset(Repo, page_size: 1)
 
     assert with_preload.id == without_preload.id
     assert Ecto.assoc_loaded?(with_preload.authored_articles)
   end
 
-  test "cursor pagination uses the ids-first strategy when to-many joins are present" do
-    query =
-      User
-      |> QueryBuilder.where([authored_articles: :comments], title@comments: "It's great!")
-      |> QueryBuilder.order_by(asc: :nickname)
-
-    {_result, query_count} =
-      with_repo_query_count(fn ->
-        QueryBuilder.paginate(query, Repo, page_size: 2, cursor: nil, direction: :after)
-      end)
-
-    assert query_count == 2
-  end
-
-  test "paginate raises when cursor pagination is disabled and to-many joins are present (unless unsafe opt-in)" do
+  test "paginate_cursor raises on non-cursorable order_by, but paginate_offset works (even with to-many joins)" do
     character_length = fn field, get_binding_fun ->
       {field, binding} = get_binding_fun.(field)
       Ecto.Query.dynamic([{^binding, x}], fragment("character_length(?)", field(x, ^field)))
@@ -2170,22 +2007,17 @@ defmodule QueryBuilderTest do
       |> QueryBuilder.where([authored_articles: :comments], title@comments: "It's great!")
       |> QueryBuilder.order_by(asc: &character_length.(:nickname, &1))
 
-    assert_raise ArgumentError, ~r/unsafe_sql_row_pagination/, fn ->
-      QueryBuilder.paginate(query, Repo, page_size: 2, cursor: nil, direction: :after)
+    assert_raise ArgumentError, ~r/paginate_offset/, fn ->
+      QueryBuilder.paginate_cursor(query, Repo, page_size: 2, cursor: nil, direction: :after)
     end
 
     %{paginated_entries: entries} =
-      QueryBuilder.paginate(query, Repo,
-        page_size: 2,
-        cursor: nil,
-        direction: :after,
-        unsafe_sql_row_pagination?: true
-      )
+      QueryBuilder.paginate_offset(query, Repo, page_size: 2)
 
     assert is_list(entries)
   end
 
-  test "paginate raises when cursor pagination is disabled (custom order_by), unless unsafe opt-in" do
+  test "paginate_cursor raises on non-cursorable order_by, but paginate_offset works" do
     character_length = fn field, get_binding_fun ->
       {field, binding} = get_binding_fun.(field)
       Ecto.Query.dynamic([{^binding, x}], fragment("character_length(?)", field(x, ^field)))
@@ -2195,17 +2027,12 @@ defmodule QueryBuilderTest do
       User
       |> QueryBuilder.order_by(asc: &character_length.(:nickname, &1))
 
-    assert_raise ArgumentError, ~r/unsafe_sql_row_pagination/, fn ->
-      QueryBuilder.paginate(query, Repo, page_size: 2, cursor: nil, direction: :after)
+    assert_raise ArgumentError, ~r/paginate_offset/, fn ->
+      QueryBuilder.paginate_cursor(query, Repo, page_size: 2, cursor: nil, direction: :after)
     end
 
     %{paginated_entries: entries} =
-      QueryBuilder.paginate(query, Repo,
-        page_size: 2,
-        cursor: nil,
-        direction: :after,
-        unsafe_sql_row_pagination?: true
-      )
+      QueryBuilder.paginate_offset(query, Repo, page_size: 2)
 
     assert is_list(entries)
   end
@@ -2234,7 +2061,7 @@ defmodule QueryBuilderTest do
     end
   end
 
-  test "paginate raises on custom select expressions even in unsafe_sql_row_pagination?: true mode" do
+  test "paginate_offset raises on custom select expressions" do
     character_length = fn field, get_binding_fun ->
       {field, binding} = get_binding_fun.(field)
       Ecto.Query.dynamic([{^binding, x}], fragment("character_length(?)", field(x, ^field)))
@@ -2246,12 +2073,7 @@ defmodule QueryBuilderTest do
       |> QueryBuilder.select(:name)
 
     assert_raise ArgumentError, ~r/custom select|root schema struct/, fn ->
-      QueryBuilder.paginate(query, Repo,
-        page_size: 2,
-        cursor: nil,
-        direction: :after,
-        unsafe_sql_row_pagination?: true
-      )
+      QueryBuilder.paginate_offset(query, Repo, page_size: 2)
     end
   end
 
