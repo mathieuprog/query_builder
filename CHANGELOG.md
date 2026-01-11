@@ -1,5 +1,34 @@
 # Changelog
 
+## 2.1.x
+
+### New features
+
+- Allowlisted includes in `from_opts/3`: contexts can expose `include:` keys via an `includes:` allowlist.
+- `paginate/3` is now an alias for `paginate_cursor/3`; offset/row pagination is `paginate_offset/3`.
+
+Example (allowlisted includes for controllers/resolvers):
+
+```elixir
+def list_users(opts \\ []) do
+  User
+  |> QueryBuilder.where(deleted: false)
+  |> QueryBuilder.from_opts(opts, includes: [role: :role])
+  |> Repo.all()
+end
+
+# controller/resolver
+list_users(where: [name: "Alice"], include: [:role])
+```
+
+Supported `includes:` allowlist entries:
+
+- `role: :role` (shortcut for `{:preload_separate, :role}`)
+- `articles_with_comments: [authored_articles: :comments]` (shortcut for `{:preload_separate, [authored_articles: :comments]}`)
+- `role: {:preload_separate, :role}`
+- `published_authored_articles: {:preload_separate_scoped, :authored_articles, opts}`
+- `featured_authored_articles: {:preload_through_join, :authored_articles}` (requires the assoc to be joined)
+
 ## 2.0.0
 
 ### Breaking changes
@@ -150,7 +179,6 @@ If you need “association must exist”, make it explicit with `inner_join/2` o
 - `left_join_top_n/3`: left-join the top N `has_many` rows per parent and select `{root, assoc}`.
 - Full-path tokens (`field@assoc@nested_assoc...`): disambiguate in case of ambiguity.
 - Join markers (`:assoc?` / `:assoc!`): declare optional vs required association joins (`LEFT` vs `INNER`).
-- `paginate/3` is now an alias for `paginate_cursor/3`; offset/row pagination is `paginate_offset/3`.
 
 ### Bug fixes
 
