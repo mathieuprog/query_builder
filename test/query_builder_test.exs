@@ -2175,7 +2175,11 @@ defmodule QueryBuilderTest do
     oversized_cursor = String.duplicate("a", 8_193)
 
     assert_raise ArgumentError, ~r/cursor is too large/, fn ->
-      QueryBuilder.paginate(query, Repo, page_size: 3, cursor: oversized_cursor, direction: :after)
+      QueryBuilder.paginate(query, Repo,
+        page_size: 3,
+        cursor: oversized_cursor,
+        direction: :after
+      )
     end
   end
 
