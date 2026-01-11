@@ -27,6 +27,22 @@ end
 list_users(where: [name: "Alice"], order_by: [desc: :inserted_at], limit: 50)
 ```
 
+To let external callers request preloads safely, expose explicit `include:` keys that the context allowlists via `includes:`:
+
+```elixir
+def list_users(opts \\ []) do
+  includes = [role: :role]
+
+  User
+  |> QueryBuilder.where(deleted: false)
+  |> QueryBuilder.from_opts(opts, includes: includes)
+  |> Repo.all()
+end
+
+# controller/resolver
+list_users(where: [name: "Alice"], include: [:role])
+```
+
 For optional params, use `maybe_where/*` / `maybe_order_by/*` to conditionally apply clauses.
 
 ```elixir
@@ -248,6 +264,7 @@ end
 ### `from_opts`
 
 - `from_opts/2` defaults to boundary mode (for controllers/resolvers): allowlists `where`, `where_any`, `order_by`, `limit`, `offset`.
+- To expose preloads safely at the boundary, let callers pass `include: [...]` and pass an `includes:` allowlist to `from_opts/3` (contexts define the meaning of each include key).
 - `from_opts/3` with `mode: :full` enables the full QueryBuilder surface (use when the caller knows the base query’s implementation/shape).
 - `args/*` wraps multiple arguments for `from_opts(..., mode: :full)` (e.g. calling `where/4`, `order_by/3`, `select/3`, or extension ops).
 
