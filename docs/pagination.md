@@ -1,4 +1,4 @@
-# QueryBuilder Pagination
+# Pagination
 
 QueryBuilder provides two explicit pagination APIs:
 
