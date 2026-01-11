@@ -17,10 +17,12 @@ defmodule QueryBuilder.Pagination.CursorCodec do
             "paginate_cursor/3 cursor cannot be an empty string; omit `cursor:` (or pass `nil`) for the first page"
     end
 
-    if byte_size(cursor) > @max_encoded_cursor_bytes do
+    cursor_size = byte_size(cursor)
+
+    if cursor_size > @max_encoded_cursor_bytes do
       raise ArgumentError,
             "paginate_cursor/3 cursor is too large (max #{@max_encoded_cursor_bytes} bytes); " <>
-              "got #{byte_size(cursor)} bytes"
+              "got #{cursor_size} bytes"
     end
 
     decoded_string =
