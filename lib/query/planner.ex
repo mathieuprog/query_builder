@@ -8,21 +8,23 @@ defmodule QueryBuilder.Query.Planner do
 
   @join_only_ops [:inner_join, :left_join]
 
-  alias QueryBuilder.Query.Distinct
-  alias QueryBuilder.Query.DistinctRoots
-  alias QueryBuilder.Query.GroupBy
-  alias QueryBuilder.Query.Having
-  alias QueryBuilder.Query.LeftJoinLatest
-  alias QueryBuilder.Query.LeftJoinTopN
-  alias QueryBuilder.Query.Limit
-  alias QueryBuilder.Query.Offset
-  alias QueryBuilder.Query.OrderBy
-  alias QueryBuilder.Query.Select
-  alias QueryBuilder.Query.SelectMerge
-  alias QueryBuilder.Query.TopNPer
-  alias QueryBuilder.Query.Where
-  alias QueryBuilder.Query.WhereExistsSubquery
-  alias QueryBuilder.Query.WhereNotExistsSubquery
+  alias QueryBuilder.Query.{
+    Distinct,
+    DistinctRoots,
+    GroupBy,
+    Having,
+    LeftJoinLatest,
+    LeftJoinTopN,
+    Limit,
+    Offset,
+    OrderBy,
+    Select,
+    SelectMerge,
+    TopNPer,
+    Where,
+    WhereExistsSubquery,
+    WhereNotExistsSubquery
+  }
 
   def compile(%{ecto_query: ecto_query, operations: operations}) when is_list(operations) do
     QueryBuilder.Utils.with_token_cache(fn ->

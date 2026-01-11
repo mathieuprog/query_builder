@@ -38,1160 +38,29 @@ defmodule QueryBuilder do
     |> Ecto.Query.subquery()
   end
 
+  # ----------------------------------------------------------------------------
+  # Pagination
+  # ----------------------------------------------------------------------------
+
   def paginate(%QueryBuilder.Query{} = query, repo, opts \\ []) do
     paginate_cursor(query, repo, opts)
   end
 
-  @cursor_projection_root_key :__qb__cursor_projection_root__
-
   def paginate_cursor(%QueryBuilder.Query{} = query, repo, opts \\ []) do
-    if Keyword.has_key?(opts, :unsafe_sql_row_pagination?) do
-      raise ArgumentError,
-            "paginate_cursor/3 does not support `unsafe_sql_row_pagination?`; " <>
-              "use `paginate_offset/3` for offset/row pagination."
-    end
-
-    QueryBuilder.Utils.with_token_cache(fn ->
-      page_size = Keyword.get(opts, :page_size, default_page_size())
-      cursor_direction = Keyword.get(opts, :direction, :after)
-
-      unless is_integer(page_size) and page_size >= 1 do
-        raise ArgumentError,
-              "paginate_cursor/3 page_size must be a positive integer, got: #{inspect(page_size)}"
-      end
-
-      max_page_size = Keyword.get(opts, :max_page_size)
-
-      if not is_nil(max_page_size) and not (is_integer(max_page_size) and max_page_size >= 1) do
-        raise ArgumentError,
-              "paginate_cursor/3 max_page_size must be a positive integer, got: #{inspect(max_page_size)}"
-      end
-
-      unless cursor_direction in [:after, :before] do
-        raise ArgumentError,
-              "paginate_cursor/3 cursor direction #{inspect(cursor_direction)} is invalid"
-      end
-
-      base_ecto_query =
-        case query.ecto_query do
-          %Ecto.Query{} = ecto_query -> ecto_query
-          other -> Ecto.Queryable.to_query(other)
-        end
-
-      base_query_has_preloads? = base_ecto_query.preloads != [] or base_ecto_query.assocs != []
-
-      root_schema = QueryBuilder.Utils.root_schema(base_ecto_query)
-      primary_key_fields = root_schema.__schema__(:primary_key)
-
-      if primary_key_fields == [] do
-        raise ArgumentError,
-              "paginate_cursor/3 requires the root schema to have a primary key so it can append a stable tie-breaker " <>
-                "and reload unique root rows; got schema with no primary key: #{inspect(root_schema)}. " <>
-                "Use `paginate_offset/3` for offset/row pagination (no cursor)."
-      end
-
-      if base_ecto_query.order_bys != [] do
-        raise ArgumentError,
-              "paginate_cursor/3 does not support paginating a query whose base ecto_query already has `order_by` clauses; " <>
-                "express ordering via `QueryBuilder.order_by/*` (or remove base ordering via `Ecto.Query.exclude(base_query, :order_by)`) " <>
-                "before calling paginate_cursor/3. base order_bys: #{inspect(base_ecto_query.order_bys)}"
-      end
-
-      page_size =
-        if is_nil(max_page_size) do
-          page_size
-        else
-          min(max_page_size, page_size)
-        end
-
-      cursor = decode_cursor!(Keyword.get(opts, :cursor))
-
-      query = limit(query, page_size + 1)
-
-      existing_order_fields =
-        query.operations
-        |> Enum.flat_map(fn
-          {:order_by, _assocs, [keyword_list]} ->
-            Enum.flat_map(keyword_list, fn
-              {_direction, field} when is_atom(field) or is_binary(field) ->
-                [to_string(field)]
-
-              _ ->
-                []
-            end)
-
-          _ ->
-            []
-        end)
-        |> MapSet.new()
-
-      missing_pk_fields =
-        Enum.reject(primary_key_fields, fn pk_field ->
-          MapSet.member?(existing_order_fields, Atom.to_string(pk_field))
-        end)
-
-      query =
-        case missing_pk_fields do
-          [] -> query
-          pk_fields -> order_by(query, Enum.map(pk_fields, &{:asc, &1}))
-        end
-
-      # Reverse sorting order if direction is :before
-      operations =
-        if cursor_direction == :before do
-          query.operations
-          |> Enum.map(fn
-            {:order_by, assocs, [keyword_list]} ->
-              updated_keyword_list =
-                Enum.map(keyword_list, fn {direction, field} ->
-                  {reverse_order_direction(direction, field), field}
-                end)
-
-              {:order_by, assocs, [updated_keyword_list]}
-
-            operation ->
-              operation
-          end)
-        else
-          query.operations
-        end
-
-      query = Map.put(query, :operations, operations)
-
-      order_by_list =
-        query.operations
-        |> Enum.filter(&match?({:order_by, _, _}, &1))
-        |> Enum.reverse()
-        |> Enum.flat_map(fn {:order_by, _assocs, [keyword_list]} -> keyword_list end)
-        |> Enum.map(fn {direction, field} ->
-          if is_atom(field) or is_binary(field) do
-            {direction, to_string(field)}
-          else
-            {direction, field}
-          end
-        end)
-        |> Enum.uniq_by(fn {_direction, field} -> field end)
-
-      cursor_pagination_supported? =
-        Enum.all?(order_by_list, fn {direction, field} ->
-          cursorable_order_by_field?(field) and supported_cursor_order_direction?(direction)
-        end)
-
-      if not cursor_pagination_supported? do
-        raise ArgumentError,
-              "paginate_cursor/3 requires cursorable order_by fields to support cursor pagination; " <>
-                "got: #{inspect(order_by_list)}. " <>
-                "Fix: use cursorable order_by fields (atoms/strings, including tokens like :name@role), or use `paginate_offset/3`."
-      end
-
-      if cursor != %{} do
-        validate_cursor_matches_order_by!(cursor, order_by_list)
-      end
-
-      valid_cursor? = cursor != %{}
-
-      query =
-        if valid_cursor? do
-          filters = build_keyset_or_filters(repo, order_by_list, cursor)
-
-          case filters do
-            [] ->
-              query
-
-            [first_filter | rest_filters] ->
-              or_filters = Enum.map(rest_filters, &{:or, &1})
-              where(query, [], first_filter, or_filters)
-          end
-        else
-          query
-        end
-
-      {ecto_query, assoc_list} = QueryBuilder.Query.to_query_and_assoc_list(query)
-
-      ensure_paginate_select_is_root!(ecto_query)
-
-      cursor_fields_extractable? =
-        cursor_fields_extractable_from_entries?(root_schema, assoc_list, order_by_list)
-
-      only_to_one_assoc_joins? = only_to_one_assoc_joins?(ecto_query, root_schema)
-
-      {entries, first_row_cursor_map, last_row_cursor_map, has_more?} =
-        if cursor_fields_extractable? and
-             only_to_one_assoc_joins? and
-             (not base_query_has_preloads? or not has_to_many_preloads?(assoc_list)) do
-          {page_ecto_query, deferred_preloads} =
-            if base_query_has_preloads? do
-              {ecto_query, []}
-            else
-              QueryBuilder.Query.Preload.split_for_pagination(ecto_query, assoc_list)
-            end
-
-          {entries, has_more?} =
-            page_ecto_query
-            |> repo.all()
-            |> normalize_paginated_rows(page_size, cursor_direction)
-
-          entries = maybe_apply_deferred_preloads(repo, entries, deferred_preloads)
-
-          first_entry = List.first(entries)
-          last_entry = List.last(entries)
-
-          {entries, cursor_map_from_entry(first_entry, order_by_list),
-           cursor_map_from_entry(last_entry, order_by_list), has_more?}
-        else
-          projection_pagination_possible? =
-            not base_query_has_preloads? and only_to_one_assoc_joins? and
-              not cursor_fields_extractable? and not has_through_join_preloads?(assoc_list)
-
-          cursor_select_map = build_cursor_select_map(assoc_list, order_by_list)
-
-          if projection_pagination_possible? do
-            {page_ecto_query, deferred_preloads} =
-              QueryBuilder.Query.Preload.split_for_pagination(ecto_query, assoc_list)
-
-            if page_ecto_query.preloads != [] or page_ecto_query.assocs != [] do
-              raise ArgumentError,
-                    "paginate_cursor/3 internal error: cursor projection pagination cannot be combined with through-join preloads"
-            end
-
-            root_value_expr = Ecto.Query.dynamic([{^root_schema, x}], x)
-
-            projection_select_map =
-              cursor_select_map
-              |> Map.put(@cursor_projection_root_key, root_value_expr)
-
-            rows_all =
-              page_ecto_query
-              |> Ecto.Query.select([{^root_schema, _x}], ^projection_select_map)
-              |> repo.all()
-              |> Enum.map(fn row ->
-                {
-                  Map.fetch!(row, @cursor_projection_root_key),
-                  Map.delete(row, @cursor_projection_root_key)
-                }
-              end)
-
-            keys_all =
-              Enum.map(rows_all, fn {entry, _cursor_map} ->
-                primary_key_value_from_entry(entry, primary_key_fields)
-              end)
-
-            ensure_paginate_cursor_root_keys_unique!(keys_all, order_by_list)
-
-            {rows, has_more?} = normalize_paginated_rows(rows_all, page_size, cursor_direction)
-
-            entries = Enum.map(rows, &elem(&1, 0))
-            entries = maybe_apply_deferred_preloads(repo, entries, deferred_preloads)
-
-            first_row = List.first(rows)
-            last_row = List.last(rows)
-
-            first_row_cursor_map = if is_nil(first_row), do: nil, else: elem(first_row, 1)
-            last_row_cursor_map = if is_nil(last_row), do: nil, else: elem(last_row, 1)
-
-            {entries, first_row_cursor_map, last_row_cursor_map, has_more?}
-          else
-            page_keys_query =
-              ecto_query
-              |> Query.exclude([:preload, :select])
-              |> Ecto.Query.select([{^root_schema, x}], ^cursor_select_map)
-              |> Ecto.Query.distinct(true)
-
-            page_key_rows_all = repo.all(page_keys_query)
-
-            keys_all =
-              Enum.map(page_key_rows_all, &primary_key_value_from_row(&1, primary_key_fields))
-
-            ensure_paginate_cursor_root_keys_unique!(keys_all, order_by_list)
-
-            {page_key_rows, has_more?} =
-              normalize_paginated_rows(page_key_rows_all, page_size, cursor_direction)
-
-            keys = Enum.map(page_key_rows, &primary_key_value_from_row(&1, primary_key_fields))
-
-            entries =
-              load_entries_for_page(repo, ecto_query, root_schema, primary_key_fields, keys)
-
-            first_row = List.first(page_key_rows)
-            last_row = List.last(page_key_rows)
-
-            {entries, first_row, last_row, has_more?}
-          end
-        end
-
-      build_cursor = fn
-        nil -> nil
-        cursor_map when is_map(cursor_map) -> encode_cursor(cursor_map)
-      end
-
-      %{
-        pagination: %{
-          cursor_direction: cursor_direction,
-          cursor_for_entries_before: build_cursor.(first_row_cursor_map),
-          cursor_for_entries_after: build_cursor.(last_row_cursor_map),
-          has_more_entries: has_more?,
-          max_page_size: page_size
-        },
-        paginated_entries: entries
-      }
-    end)
+    QueryBuilder.Pagination.paginate_cursor(query, repo, opts)
   end
 
   def paginate_offset(%QueryBuilder.Query{} = query, repo, opts \\ []) do
-    if Keyword.has_key?(opts, :unsafe_sql_row_pagination?) do
-      raise ArgumentError,
-            "paginate_offset/3 does not accept `unsafe_sql_row_pagination?`; " <>
-              "offset/row pagination is already explicit in this function."
-    end
-
-    if not is_nil(Keyword.get(opts, :cursor)) do
-      raise ArgumentError,
-            "paginate_offset/3 does not support `cursor:`; use `paginate_cursor/3` for cursor pagination."
-    end
-
-    if Keyword.has_key?(opts, :direction) do
-      raise ArgumentError,
-            "paginate_offset/3 does not support `direction:`; " <>
-              "use `offset/2` to move pages (or use `paginate_cursor/3` for cursor pagination)."
-    end
-
-    QueryBuilder.Utils.with_token_cache(fn ->
-      page_size = Keyword.get(opts, :page_size, default_page_size())
-
-      unless is_integer(page_size) and page_size >= 1 do
-        raise ArgumentError,
-              "paginate_offset/3 page_size must be a positive integer, got: #{inspect(page_size)}"
-      end
-
-      max_page_size = Keyword.get(opts, :max_page_size)
-
-      if not is_nil(max_page_size) and not (is_integer(max_page_size) and max_page_size >= 1) do
-        raise ArgumentError,
-              "paginate_offset/3 max_page_size must be a positive integer, got: #{inspect(max_page_size)}"
-      end
-
-      base_ecto_query =
-        case query.ecto_query do
-          %Ecto.Query{} = ecto_query -> ecto_query
-          other -> Ecto.Queryable.to_query(other)
-        end
-
-      base_query_has_preloads? = base_ecto_query.preloads != [] or base_ecto_query.assocs != []
-
-      if base_ecto_query.order_bys != [] do
-        raise ArgumentError,
-              "paginate_offset/3 does not support paginating a query whose base ecto_query already has `order_by` clauses; " <>
-                "express ordering via `QueryBuilder.order_by/*` (or remove base ordering via `Ecto.Query.exclude(base_query, :order_by)`) " <>
-                "before calling paginate_offset/3. base order_bys: #{inspect(base_ecto_query.order_bys)}"
-      end
-
-      page_size =
-        if is_nil(max_page_size) do
-          page_size
-        else
-          min(max_page_size, page_size)
-        end
-
-      root_schema = QueryBuilder.Utils.root_schema(base_ecto_query)
-      primary_key_fields = root_schema.__schema__(:primary_key)
-
-      if primary_key_fields == [] do
-        raise ArgumentError,
-              "paginate_offset/3 requires the root schema to have a primary key so it can return unique root rows; " <>
-                "got schema with no primary key: #{inspect(root_schema)}. " <>
-                "If you truly need raw SQL-row pagination, use `limit/2` + `offset/2` directly on an Ecto query."
-      end
-
-      query = limit(query, page_size + 1)
-
-      existing_order_fields =
-        query.operations
-        |> Enum.flat_map(fn
-          {:order_by, _assocs, [keyword_list]} ->
-            Enum.flat_map(keyword_list, fn
-              {_direction, field} when is_atom(field) or is_binary(field) ->
-                [to_string(field)]
-
-              _ ->
-                []
-            end)
-
-          _ ->
-            []
-        end)
-        |> MapSet.new()
-
-      missing_pk_fields =
-        Enum.reject(primary_key_fields, fn pk_field ->
-          MapSet.member?(existing_order_fields, Atom.to_string(pk_field))
-        end)
-
-      query =
-        case missing_pk_fields do
-          [] ->
-            query
-
-          pk_fields ->
-            order_by(query, Enum.map(pk_fields, &{:asc, &1}))
-        end
-
-      {ecto_query, assoc_list} = QueryBuilder.Query.to_query_and_assoc_list(query)
-
-      ensure_paginate_select_is_root!(ecto_query)
-
-      {entries, has_more?} =
-        if only_to_one_assoc_joins?(ecto_query, root_schema) do
-          {page_ecto_query, deferred_preloads} =
-            if base_query_has_preloads? do
-              {ecto_query, []}
-            else
-              QueryBuilder.Query.Preload.split_for_pagination(ecto_query, assoc_list)
-            end
-
-          {entries, has_more?} =
-            page_ecto_query
-            |> repo.all()
-            |> normalize_offset_paginated_rows(page_size)
-
-          entries = maybe_apply_deferred_preloads(repo, entries, deferred_preloads)
-
-          {entries, has_more?}
-        else
-          order_by_entries = offset_order_by_entries(query.operations)
-
-          page_keys_select_map =
-            build_offset_page_keys_select_map(assoc_list, primary_key_fields, order_by_entries)
-
-          page_keys_query =
-            ecto_query
-            |> Query.exclude([:preload, :select])
-            |> Ecto.Query.select([{^root_schema, _x}], ^page_keys_select_map)
-            |> Ecto.Query.distinct(true)
-
-          keys_all =
-            page_keys_query
-            |> repo.all()
-            |> Enum.map(&primary_key_value_from_row(&1, primary_key_fields))
-
-          if length(keys_all) != length(Enum.uniq(keys_all)) do
-            raise ArgumentError,
-                  "paginate_offset/3 could not produce a page of unique root rows; " <>
-                    "this usually means your order_by depends on a to-many join (e.g. ordering by a has_many field). " <>
-                    "Fix: order by root/to-one fields only, or use an aggregate (e.g. max/min) to order groups."
-          end
-
-          {keys, has_more?} = normalize_offset_paginated_rows(keys_all, page_size)
-
-          entries = load_entries_for_page(repo, ecto_query, root_schema, primary_key_fields, keys)
-
-          {entries, has_more?}
-        end
-
-      %{
-        pagination: %{
-          has_more_entries: has_more?,
-          max_page_size: page_size
-        },
-        paginated_entries: entries
-      }
-    end)
+    QueryBuilder.Pagination.paginate_offset(query, repo, opts)
   end
-
-  defp offset_order_by_entries(operations) when is_list(operations) do
-    operations
-    |> Enum.filter(&match?({:order_by, _assocs, _args}, &1))
-    |> Enum.reverse()
-    |> Enum.flat_map(fn
-      {:order_by, _assocs, [keyword_list]} when is_list(keyword_list) ->
-        Enum.reject(keyword_list, &(&1 == []))
-
-      _ ->
-        []
-    end)
-  end
-
-  defp build_offset_page_keys_select_map(assoc_list, pk_fields, order_by_entries)
-       when is_list(pk_fields) and is_list(order_by_entries) do
-    pk_select_map =
-      Enum.reduce(pk_fields, %{}, fn pk_field, acc ->
-        {field, binding} =
-          QueryBuilder.Utils.find_field_and_binding_from_token(assoc_list, pk_field)
-
-        Map.put(
-          acc,
-          Atom.to_string(pk_field),
-          Ecto.Query.dynamic([{^binding, x}], field(x, ^field))
-        )
-      end)
-
-    Enum.reduce(Enum.with_index(order_by_entries, 1), pk_select_map, fn
-      {{_direction, %QueryBuilder.Aggregate{} = aggregate}, index}, acc ->
-        Map.put(
-          acc,
-          "__qb__order_by__#{index}",
-          QueryBuilder.Aggregate.to_dynamic(assoc_list, aggregate)
-        )
-
-      {{_direction, %Ecto.Query.DynamicExpr{} = dynamic}, index}, acc ->
-        Map.put(acc, "__qb__order_by__#{index}", dynamic)
-
-      {{_direction, custom_fun}, index}, acc when is_function(custom_fun, 1) ->
-        Map.put(
-          acc,
-          "__qb__order_by__#{index}",
-          custom_fun.(&QueryBuilder.Utils.find_field_and_binding_from_token(assoc_list, &1))
-        )
-
-      {{_direction, token}, index}, acc when is_atom(token) or is_binary(token) ->
-        {field, binding} = QueryBuilder.Utils.find_field_and_binding_from_token(assoc_list, token)
-
-        Map.put(
-          acc,
-          "__qb__order_by__#{index}",
-          Ecto.Query.dynamic([{^binding, x}], field(x, ^field))
-        )
-
-      {{_direction, other}, _index}, _acc ->
-        raise ArgumentError,
-              "paginate_offset/3 internal error: unexpected order_by field #{inspect(other)}"
-    end)
-  end
-
-  defp build_keyset_or_filters(repo, order_by_list, cursor) do
-    adapter = repo.__adapter__()
-
-    {_, filters} =
-      Enum.reduce(order_by_list, {[], []}, fn {direction, field},
-                                              {prev_fields_rev, filters_rev} ->
-        {dir, nulls} = normalize_cursor_order_direction(adapter, direction, field)
-        value = Map.fetch!(cursor, to_string(field))
-
-        filters_rev =
-          case keyset_groups_for_field(prev_fields_rev, field, dir, nulls, value) do
-            [] -> filters_rev
-            [group] -> [group | filters_rev]
-            [group1, group2] -> [group2, group1 | filters_rev]
-          end
-
-        prev_fields_rev = [{field, value} | prev_fields_rev]
-        {prev_fields_rev, filters_rev}
-      end)
-
-    Enum.reverse(filters)
-  end
-
-  defp ensure_paginate_select_is_root!(ecto_query) do
-    case ecto_query.select do
-      nil ->
-        :ok
-
-      %Ecto.Query.SelectExpr{expr: {:&, _, [0]}} ->
-        :ok
-
-      %Ecto.Query.SelectExpr{} = select ->
-        raise ArgumentError,
-              "paginate_cursor/3 and paginate_offset/3 do not support custom select expressions; " <>
-                "expected selecting the root schema struct (e.g. `select: u` or no select), got: #{inspect(select.expr)}"
-    end
-  end
-
-  defp cursor_fields_extractable_from_entries?(root_schema, assoc_list, order_by_list)
-       when is_atom(root_schema) do
-    Enum.all?(order_by_list, fn {_direction, token} ->
-      case split_cursor_token(token) do
-        {:root, _token_str, _field} ->
-          true
-
-        {:assoc, _token_str, _field, assoc_field} ->
-          assoc_field =
-            try do
-              String.to_existing_atom(assoc_field)
-            rescue
-              ArgumentError -> nil
-            end
-
-          not is_nil(assoc_field) and
-            not is_nil(root_schema.__schema__(:association, assoc_field)) and
-            preloaded_to_one_root_assoc?(assoc_list, assoc_field)
-
-        _ ->
-          false
-      end
-    end)
-  end
-
-  defp preloaded_to_one_root_assoc?(%QueryBuilder.AssocList{} = assoc_list, assoc_field)
-       when is_atom(assoc_field) do
-    case QueryBuilder.AssocList.root_assoc(assoc_list, assoc_field) do
-      %QueryBuilder.AssocList.Node{preload_spec: preload_spec, cardinality: :one}
-      when not is_nil(preload_spec) ->
-        true
-
-      _ ->
-        false
-    end
-  end
-
-  defp only_to_one_assoc_joins?(%Ecto.Query{} = ecto_query, root_schema)
-       when is_atom(root_schema) do
-    schemas_by_index = %{0 => root_schema}
-
-    Enum.reduce_while(
-      Enum.with_index(ecto_query.joins, 1),
-      schemas_by_index,
-      fn {join, join_index}, schemas_by_index ->
-        case join do
-          %Ecto.Query.JoinExpr{assoc: {parent_index, assoc_field}}
-          when is_integer(parent_index) and is_atom(assoc_field) ->
-            with {:ok, parent_schema} <- Map.fetch(schemas_by_index, parent_index),
-                 %{cardinality: :one, queryable: assoc_schema} <-
-                   parent_schema.__schema__(:association, assoc_field),
-                 true <- is_atom(assoc_schema) do
-              {:cont, Map.put(schemas_by_index, join_index, assoc_schema)}
-            else
-              _ -> {:halt, :unsafe}
-            end
-
-          _ ->
-            {:halt, :unsafe}
-        end
-      end
-    ) != :unsafe
-  end
-
-  defp has_to_many_preloads?(%QueryBuilder.AssocList{} = assoc_list) do
-    QueryBuilder.AssocList.any?(assoc_list, fn assoc_data ->
-      assoc_data.preload_spec != nil and assoc_data.cardinality == :many
-    end)
-  end
-
-  defp has_through_join_preloads?(%QueryBuilder.AssocList{} = assoc_list) do
-    QueryBuilder.AssocList.any?(assoc_list, fn
-      %QueryBuilder.AssocList.Node{
-        preload_spec: %QueryBuilder.AssocList.PreloadSpec{strategy: :through_join}
-      } ->
-        true
-
-      _ ->
-        false
-    end)
-  end
-
-  defp ensure_paginate_cursor_root_keys_unique!(keys_all, order_by_list)
-       when is_list(keys_all) and is_list(order_by_list) do
-    if length(keys_all) != length(Enum.uniq(keys_all)) do
-      raise ArgumentError,
-            "paginate_cursor/3 could not produce a page of unique root rows; " <>
-              "this usually means your order_by depends on a to-many join (e.g. ordering by a has_many field). " <>
-              "Use an aggregation (e.g. max/min) or order by root/to-one fields only. " <>
-              "order_by: #{inspect(order_by_list)}"
-    end
-
-    :ok
-  end
-
-  defp cursor_map_from_entry(nil, _order_by_list), do: nil
-
-  defp cursor_map_from_entry(entry, order_by_list) do
-    Enum.reduce(order_by_list, %{}, fn {_direction, token}, acc ->
-      {token_str, value} = cursor_value_from_entry(entry, token)
-      Map.put(acc, token_str, value)
-    end)
-  end
-
-  defp split_cursor_token(token) do
-    token_str = to_string(token)
-
-    case String.split(token_str, "@", parts: 3) do
-      [field] ->
-        {:root, token_str, field}
-
-      [field, assoc_field] ->
-        {:assoc, token_str, field, assoc_field}
-
-      _ ->
-        :unsupported
-    end
-  end
-
-  defp cursor_value_from_entry(entry, token) do
-    case split_cursor_token(token) do
-      {:root, token_str, field} ->
-        field = String.to_existing_atom(field)
-        {token_str, Map.fetch!(entry, field)}
-
-      {:assoc, token_str, field, assoc_field} ->
-        field = String.to_existing_atom(field)
-        assoc_field = String.to_existing_atom(assoc_field)
-        assoc = Map.fetch!(entry, assoc_field)
-
-        value =
-          cond do
-            match?(%Ecto.Association.NotLoaded{}, assoc) ->
-              raise ArgumentError,
-                    "paginate_cursor/3 internal error: expected association #{inspect(assoc_field)} to be preloaded " <>
-                      "in order to build cursor field #{inspect(token_str)} from the returned structs"
-
-            is_nil(assoc) ->
-              nil
-
-            is_map(assoc) ->
-              Map.fetch!(assoc, field)
-
-            true ->
-              raise ArgumentError,
-                    "paginate_cursor/3 internal error: expected association #{inspect(assoc_field)} to be a struct or nil, got: #{inspect(assoc)}"
-          end
-
-        {token_str, value}
-
-      :unsupported ->
-        raise ArgumentError,
-              "paginate_cursor/3 internal error: unexpected cursor token #{inspect(to_string(token))}"
-    end
-  end
-
-  defp primary_key_value_from_row(row, [pk_field]) do
-    Map.fetch!(row, Atom.to_string(pk_field))
-  end
-
-  defp primary_key_value_from_row(row, pk_fields) when is_list(pk_fields) do
-    pk_fields
-    |> Enum.map(&Map.fetch!(row, Atom.to_string(&1)))
-    |> List.to_tuple()
-  end
-
-  defp primary_key_value_from_entry(entry, [pk_field]) do
-    Map.fetch!(entry, pk_field)
-  end
-
-  defp primary_key_value_from_entry(entry, pk_fields) when is_list(pk_fields) do
-    pk_fields
-    |> Enum.map(&Map.fetch!(entry, &1))
-    |> List.to_tuple()
-  end
-
-  defp strip_for_keys_first_entries_load(%Ecto.Query{} = ecto_query) do
-    # In keys-first pagination, the keys query already applied all filters/joins needed to
-    # decide membership + ordering. When we reload by PK list, we can often drop the join
-    # graph (which avoids join multiplication and can be significantly cheaper).
-    #
-    # This is only safe when the final query does not contain join-preloads (assocs), since
-    # those require the join semantics to hydrate associations.
-    Query.exclude(ecto_query, [
-      :join,
-      :where,
-      :group_by,
-      :having,
-      :distinct,
-      :windows,
-      :select
-    ])
-  end
-
-  defp maybe_strip_for_keys_first_entries_load(%Ecto.Query{assocs: []} = ecto_query) do
-    strip_for_keys_first_entries_load(ecto_query)
-  end
-
-  defp maybe_strip_for_keys_first_entries_load(%Ecto.Query{} = ecto_query) do
-    ecto_query
-  end
-
-  defp load_entries_for_page(_repo, _ecto_query, _source_schema, _pk_fields, []), do: []
-
-  defp load_entries_for_page(repo, ecto_query, source_schema, [pk_field], keys)
-       when is_list(keys) do
-    ecto_query = maybe_strip_for_keys_first_entries_load(ecto_query)
-
-    entries_query =
-      ecto_query
-      |> Query.exclude([:limit, :offset, :order_by])
-      |> Ecto.Query.where([{^source_schema, x}], field(x, ^pk_field) in ^keys)
-
-    entries = repo.all(entries_query)
-
-    entries_by_key =
-      Enum.reduce(entries, %{}, fn entry, acc ->
-        Map.put_new(acc, Map.fetch!(entry, pk_field), entry)
-      end)
-
-    Enum.map(keys, fn key ->
-      case Map.fetch(entries_by_key, key) do
-        {:ok, entry} ->
-          entry
-
-        :error ->
-          raise ArgumentError,
-                "paginate_cursor/3 and paginate_offset/3 internal error: expected to load an entry with primary key #{inspect(key)}, " <>
-                  "but it was missing from the results"
-      end
-    end)
-  end
-
-  defp load_entries_for_page(repo, ecto_query, source_schema, pk_fields, keys)
-       when is_list(pk_fields) and length(pk_fields) > 1 and is_list(keys) do
-    ecto_query = maybe_strip_for_keys_first_entries_load(ecto_query)
-
-    dynamic_keys =
-      Enum.map(keys, fn key ->
-        key_parts =
-          key
-          |> Tuple.to_list()
-          |> then(&Enum.zip(pk_fields, &1))
-
-        key_parts
-        |> Enum.map(fn {field, value} ->
-          Ecto.Query.dynamic([{^source_schema, x}], field(x, ^field) == ^value)
-        end)
-        |> Enum.reduce(&Ecto.Query.dynamic(^&1 and ^&2))
-      end)
-
-    [first | rest] = dynamic_keys
-    where_dynamic = Enum.reduce(rest, first, &Ecto.Query.dynamic(^&1 or ^&2))
-
-    entries_query =
-      ecto_query
-      |> Query.exclude([:limit, :offset, :order_by])
-      |> Ecto.Query.where(^where_dynamic)
-
-    entries = repo.all(entries_query)
-
-    entries_by_key =
-      Enum.reduce(entries, %{}, fn entry, acc ->
-        key =
-          pk_fields
-          |> Enum.map(&Map.fetch!(entry, &1))
-          |> List.to_tuple()
-
-        Map.put_new(acc, key, entry)
-      end)
-
-    Enum.map(keys, fn key ->
-      case Map.fetch(entries_by_key, key) do
-        {:ok, entry} ->
-          entry
-
-        :error ->
-          raise ArgumentError,
-                "paginate_cursor/3 and paginate_offset/3 internal error: expected to load an entry with primary key #{inspect(key)}, " <>
-                  "but it was missing from the results"
-      end
-    end)
-  end
-
-  defp reverse_if_before(rows, :before), do: Enum.reverse(rows)
-  defp reverse_if_before(rows, :after), do: rows
-
-  defp maybe_apply_deferred_preloads(_repo, [], _preloads), do: []
-
-  defp maybe_apply_deferred_preloads(repo, entries, preloads) when is_list(entries) do
-    case preloads do
-      [] -> entries
-      _ -> repo.preload(entries, preloads)
-    end
-  end
-
-  defp normalize_paginated_rows(rows, page_size, cursor_direction) do
-    rows = reverse_if_before(rows, cursor_direction)
-    has_more? = length(rows) == page_size + 1
-
-    rows =
-      if has_more? do
-        case cursor_direction do
-          :before -> tl(rows)
-          :after -> List.delete_at(rows, -1)
-        end
-      else
-        rows
-      end
-
-    {rows, has_more?}
-  end
-
-  defp normalize_offset_paginated_rows(rows, page_size) do
-    has_more? = length(rows) == page_size + 1
-
-    rows =
-      if has_more? do
-        List.delete_at(rows, -1)
-      else
-        rows
-      end
-
-    {rows, has_more?}
-  end
-
-  defp keyset_groups_for_field(prev_fields_rev, field, _dir, nulls, nil) do
-    # If the cursor value is NULL, we can’t emit `field < NULL` / `field > NULL`.
-    # Instead, we:
-    #   - optionally include a branch for the non-NULL group (when NULLs sort first)
-    #   - then rely on subsequent order_by fields for tie-breaking inside the NULL group
-    case nulls do
-      :first ->
-        [[{field, :ne, nil} | prev_fields_rev]]
-
-      :last ->
-        []
-    end
-  end
-
-  defp keyset_groups_for_field(prev_fields_rev, field, dir, nulls, value) do
-    operator =
-      case dir do
-        :asc -> :gt
-        :desc -> :lt
-      end
-
-    group = [{field, operator, value} | prev_fields_rev]
-
-    # When NULLs sort last, NULL is after any non-NULL cursor value, so include it.
-    case nulls do
-      :last -> [group, [{field, nil} | prev_fields_rev]]
-      :first -> [group]
-    end
-  end
-
-  defp build_cursor_select_map(assoc_list, order_by_list) do
-    cursor_field_tokens = Enum.map(order_by_list, &elem(&1, 1))
-
-    Enum.reduce(cursor_field_tokens, %{}, fn token, acc ->
-      {field, binding} =
-        QueryBuilder.Utils.find_field_and_binding_from_token(assoc_list, token)
-
-      value_expr = Ecto.Query.dynamic([{^binding, x}], field(x, ^field))
-
-      Map.put(acc, to_string(token), value_expr)
-    end)
-  end
-
-  defp encode_cursor(cursor_map) when is_map(cursor_map) do
-    cursor_map
-    |> Jason.encode!()
-    |> Base.url_encode64()
-  end
-
-  defp decode_cursor!(nil), do: %{}
-
-  defp decode_cursor!(cursor) when is_binary(cursor) do
-    if cursor == "" do
-      raise ArgumentError,
-            "paginate_cursor/3 cursor cannot be an empty string; omit `cursor:` (or pass `nil`) for the first page"
-    end
-
-    decoded_string =
-      case Base.url_decode64(cursor) do
-        {:ok, decoded} ->
-          decoded
-
-        :error ->
-          case Base.url_decode64(cursor, padding: false) do
-            {:ok, decoded} ->
-              decoded
-
-            :error ->
-              raise ArgumentError,
-                    "paginate_cursor/3 invalid cursor; expected base64url-encoded JSON, got: #{inspect(cursor)}"
-          end
-      end
-
-    decoded_cursor =
-      case Jason.decode(decoded_string) do
-        {:ok, decoded} ->
-          decoded
-
-        {:error, error} ->
-          raise ArgumentError,
-                "paginate_cursor/3 invalid cursor; expected base64url-encoded JSON, got JSON decode error: #{Exception.message(error)}"
-      end
-
-    unless is_map(decoded_cursor) do
-      raise ArgumentError,
-            "paginate_cursor/3 invalid cursor; expected a JSON object (map), got: #{inspect(decoded_cursor)}"
-    end
-
-    decoded_cursor = normalize_cursor_map!(decoded_cursor)
-
-    if decoded_cursor == %{} do
-      raise ArgumentError,
-            "paginate_cursor/3 invalid cursor; decoded cursor map was empty; omit `cursor:` (or pass `nil`) for the first page"
-    end
-
-    decoded_cursor
-  end
-
-  defp decode_cursor!(cursor) when is_map(cursor) do
-    cursor = normalize_cursor_map!(cursor)
-
-    if cursor == %{} do
-      raise ArgumentError,
-            "paginate_cursor/3 cursor map cannot be empty; omit `cursor:` (or pass `nil`) for the first page"
-    end
-
-    cursor
-  end
-
-  defp decode_cursor!(cursor) do
-    raise ArgumentError,
-          "paginate_cursor/3 cursor must be a map or a base64url-encoded JSON map (string), got: #{inspect(cursor)}"
-  end
-
-  defp normalize_cursor_map!(cursor) when is_map(cursor) do
-    normalized_pairs =
-      Enum.map(cursor, fn {key, value} ->
-        {normalize_cursor_key!(key), value}
-      end)
-
-    normalized_keys = Enum.map(normalized_pairs, &elem(&1, 0))
-
-    if length(normalized_keys) != length(Enum.uniq(normalized_keys)) do
-      raise ArgumentError,
-            "paginate_cursor/3 cursor map has duplicate keys after normalization: #{inspect(normalized_keys)}"
-    end
-
-    Map.new(normalized_pairs)
-  end
-
-  defp normalize_cursor_key!(key) when is_binary(key) do
-    if key == "" do
-      raise ArgumentError, "paginate_cursor/3 cursor map has an empty key"
-    end
-
-    key
-  end
-
-  defp normalize_cursor_key!(key) when is_atom(key) do
-    Atom.to_string(key)
-  end
-
-  defp normalize_cursor_key!(key) do
-    raise ArgumentError,
-          "paginate_cursor/3 cursor map keys must be strings or atoms; got: #{inspect(key)}"
-  end
-
-  defp validate_cursor_matches_order_by!(cursor, order_by_list) when is_map(cursor) do
-    expected_keys =
-      order_by_list
-      |> Enum.map(fn {_direction, field} -> to_string(field) end)
-      |> Enum.uniq()
-
-    cursor_keys = Map.keys(cursor)
-
-    expected_set = MapSet.new(expected_keys)
-    cursor_set = MapSet.new(cursor_keys)
-
-    missing =
-      expected_set
-      |> MapSet.difference(cursor_set)
-      |> MapSet.to_list()
-      |> Enum.sort()
-
-    extra =
-      cursor_set
-      |> MapSet.difference(expected_set)
-      |> MapSet.to_list()
-      |> Enum.sort()
-
-    if missing != [] or extra != [] do
-      raise ArgumentError,
-            "paginate_cursor/3 cursor does not match the query's order_by fields; " <>
-              "expected keys: #{inspect(expected_keys)}, " <>
-              "missing: #{inspect(missing)}, extra: #{inspect(extra)}. " <>
-              "This cursor was likely generated for a different query or the query's order_by changed."
-    end
-  end
-
-  defp cursorable_order_by_field?(field) when is_atom(field) or is_binary(field), do: true
-  defp cursorable_order_by_field?(_field), do: false
-
-  defp supported_cursor_order_direction?(direction)
-       when direction in [
-              :asc,
-              :desc,
-              :asc_nulls_first,
-              :asc_nulls_last,
-              :desc_nulls_first,
-              :desc_nulls_last
-            ],
-       do: true
-
-  defp supported_cursor_order_direction?(_direction), do: false
-
-  defp normalize_cursor_order_direction(adapter, direction, field) do
-    case direction do
-      :asc -> {:asc, adapter_default_nulls_position!(adapter, :asc, field)}
-      :desc -> {:desc, adapter_default_nulls_position!(adapter, :desc, field)}
-      :asc_nulls_first -> {:asc, :first}
-      :asc_nulls_last -> {:asc, :last}
-      :desc_nulls_first -> {:desc, :first}
-      :desc_nulls_last -> {:desc, :last}
-    end
-  end
-
-  defp adapter_default_nulls_position!(adapter, dir, field) when dir in [:asc, :desc] do
-    case {adapter, dir} do
-      {Ecto.Adapters.Postgres, :asc} ->
-        :last
-
-      {Ecto.Adapters.Postgres, :desc} ->
-        :first
-
-      {Ecto.Adapters.MyXQL, :asc} ->
-        :first
-
-      {Ecto.Adapters.MyXQL, :desc} ->
-        :last
-
-      {Ecto.Adapters.SQLite3, :asc} ->
-        :first
-
-      {Ecto.Adapters.SQLite3, :desc} ->
-        :last
-
-      {other, _} ->
-        raise ArgumentError,
-              "paginate_cursor/3 cannot infer the default NULL ordering for adapter #{inspect(other)} " <>
-                "when using #{inspect(dir)} for #{inspect(field)}; " <>
-                "supported adapters: Ecto.Adapters.Postgres, Ecto.Adapters.MyXQL, Ecto.Adapters.SQLite3. " <>
-                "Use explicit *_nulls_* order directions if supported by your adapter."
-    end
-  end
-
-  defp reverse_order_direction(direction, field) do
-    case direction do
-      :asc ->
-        :desc
-
-      :desc ->
-        :asc
-
-      :asc_nulls_first ->
-        :desc_nulls_last
-
-      :asc_nulls_last ->
-        :desc_nulls_first
-
-      :desc_nulls_first ->
-        :asc_nulls_last
-
-      :desc_nulls_last ->
-        :asc_nulls_first
-
-      other ->
-        raise ArgumentError,
-              "paginate_cursor/3 can't reverse order direction #{inspect(other)} for field #{inspect(field)} " <>
-                "(supported: :asc, :desc, :asc_nulls_first, :asc_nulls_last, :desc_nulls_first, :desc_nulls_last)"
-    end
-  end
-
-  # NOTE: Cursor token parsing/resolution is intentionally delegated to the same
-  # token system used by where/order_by (`QueryBuilder.Utils.find_field_and_binding_from_token/2`),
-  # so we don't couple pagination correctness to binding naming conventions.
-  #
-  # See `QueryBuilder.Utils.find_field_and_binding_from_token/2`.
 
   def default_page_size() do
     Application.get_env(:query_builder, :default_page_size, 100)
   end
+
+  # ----------------------------------------------------------------------------
+  # Preloads
+  # ----------------------------------------------------------------------------
 
   @doc ~S"""
   Preloads associations using *separate* queries (Ecto's default preload behavior).
@@ -1204,13 +73,7 @@ defmodule QueryBuilder do
   ```
   """
   def preload_separate(%QueryBuilder.Query{} = query, assoc_fields) do
-    %{
-      query
-      | operations: [
-          {:preload, assoc_fields, [QueryBuilder.AssocList.PreloadSpec.new(:separate)]}
-          | query.operations
-        ]
-    }
+    QueryBuilder.PreloadOps.preload_separate(query, assoc_fields)
   end
 
   def preload_separate(ecto_query, assoc_fields) do
@@ -1256,15 +119,7 @@ defmodule QueryBuilder do
 
   def preload_separate_scoped(%QueryBuilder.Query{} = query, assoc_field, opts)
       when is_atom(assoc_field) do
-    opts = normalize_preload_separate_scoped_opts!(opts, assoc_field)
-
-    %{
-      query
-      | operations: [
-          {:preload, assoc_field, [QueryBuilder.AssocList.PreloadSpec.new(:separate, opts)]}
-          | query.operations
-        ]
-    }
+    QueryBuilder.PreloadOps.preload_separate_scoped(query, assoc_field, opts)
   end
 
   def preload_separate_scoped(query, assoc_field, opts) when is_atom(assoc_field) do
@@ -1292,19 +147,17 @@ defmodule QueryBuilder do
   ```
   """
   def preload_through_join(%QueryBuilder.Query{} = query, assoc_fields) do
-    %{
-      query
-      | operations: [
-          {:preload, assoc_fields, [QueryBuilder.AssocList.PreloadSpec.new(:through_join)]}
-          | query.operations
-        ]
-    }
+    QueryBuilder.PreloadOps.preload_through_join(query, assoc_fields)
   end
 
   def preload_through_join(ecto_query, assoc_fields) do
     ecto_query = ensure_query_has_binding(ecto_query)
     preload_through_join(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields)
   end
+
+  # ----------------------------------------------------------------------------
+  # Filtering
+  # ----------------------------------------------------------------------------
 
   @doc ~S"""
   An AND where query expression.
@@ -1391,7 +244,12 @@ defmodule QueryBuilder do
   def where_any(query, assoc_fields, or_groups)
 
   def where_any(%QueryBuilder.Query{} = query, assoc_fields, or_groups) do
-    or_groups = normalize_or_groups!(or_groups, :where_any, "where_any/2 and where_any/3")
+    or_groups =
+      QueryBuilder.Filters.normalize_or_groups!(
+        or_groups,
+        :where_any,
+        "where_any/2 and where_any/3"
+      )
 
     case Enum.reject(or_groups, &(&1 == [])) do
       [] ->
@@ -1407,6 +265,10 @@ defmodule QueryBuilder do
     ecto_query = ensure_query_has_binding(ecto_query)
     where_any(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields, or_groups)
   end
+
+  # ----------------------------------------------------------------------------
+  # Selecting
+  # ----------------------------------------------------------------------------
 
   @doc ~S"""
   A select query expression.
@@ -1529,6 +391,10 @@ defmodule QueryBuilder do
     ecto_query = ensure_query_has_binding(ecto_query)
     select_merge(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields, selection)
   end
+
+  # ----------------------------------------------------------------------------
+  # Aggregates
+  # ----------------------------------------------------------------------------
 
   @doc ~S"""
   Aggregate helpers for grouped queries.
@@ -1721,6 +587,10 @@ defmodule QueryBuilder do
             "got: #{inspect(other)}"
   end
 
+  # ----------------------------------------------------------------------------
+  # Exists / Has Helpers
+  # ----------------------------------------------------------------------------
+
   @doc ~S"""
   A shorthand for `where_exists_subquery/3` (“has associated rows”).
 
@@ -1874,8 +744,11 @@ defmodule QueryBuilder do
 
     where_any_groups =
       case where_any do
-        :__missing__ -> []
-        other -> normalize_or_groups!(other, :where_any, "where_exists_subquery/3")
+        :__missing__ ->
+          []
+
+        other ->
+          QueryBuilder.Filters.normalize_or_groups!(other, :where_any, "where_exists_subquery/3")
       end
 
     where_any_groups = Enum.reject(where_any_groups, &(&1 == []))
@@ -1978,8 +851,15 @@ defmodule QueryBuilder do
 
     where_any_groups =
       case where_any do
-        :__missing__ -> []
-        other -> normalize_or_groups!(other, :where_any, "where_not_exists_subquery/3")
+        :__missing__ ->
+          []
+
+        other ->
+          QueryBuilder.Filters.normalize_or_groups!(
+            other,
+            :where_any,
+            "where_not_exists_subquery/3"
+          )
       end
 
     where_any_groups = Enum.reject(where_any_groups, &(&1 == []))
@@ -2071,6 +951,10 @@ defmodule QueryBuilder do
 
   def maybe_where(query, false, _, _, _), do: query
 
+  # ----------------------------------------------------------------------------
+  # Distinct
+  # ----------------------------------------------------------------------------
+
   @doc ~S"""
   A distinct query expression.
 
@@ -2150,6 +1034,10 @@ defmodule QueryBuilder do
     ecto_query = ensure_query_has_binding(ecto_query)
     distinct_roots(%QueryBuilder.Query{ecto_query: ecto_query}, enabled)
   end
+
+  # ----------------------------------------------------------------------------
+  # Grouping & Having
+  # ----------------------------------------------------------------------------
 
   @doc ~S"""
   A group by query expression.
@@ -2243,7 +1131,12 @@ defmodule QueryBuilder do
   def having_any(query, assoc_fields, or_groups)
 
   def having_any(%QueryBuilder.Query{} = query, assoc_fields, or_groups) do
-    or_groups = normalize_or_groups!(or_groups, :having_any, "having_any/2 and having_any/3")
+    or_groups =
+      QueryBuilder.Filters.normalize_or_groups!(
+        or_groups,
+        :having_any,
+        "having_any/2 and having_any/3"
+      )
 
     case Enum.reject(or_groups, &(&1 == [])) do
       [] ->
@@ -2403,6 +1296,10 @@ defmodule QueryBuilder do
     offset(%QueryBuilder.Query{ecto_query: ecto_query}, value)
   end
 
+  # ----------------------------------------------------------------------------
+  # Ranking Helpers (Postgres)
+  # ----------------------------------------------------------------------------
+
   @doc ~S"""
   Keeps the top N rows per group (window-function helper).
 
@@ -2505,6 +1402,10 @@ defmodule QueryBuilder do
           "first_per/2 and first_per/3 expect `opts` to be a keyword list, got: #{inspect(opts)}"
   end
 
+  # ----------------------------------------------------------------------------
+  # Joins
+  # ----------------------------------------------------------------------------
+
   @doc ~S"""
   An inner join query expression.
 
@@ -2523,10 +1424,7 @@ defmodule QueryBuilder do
   end
 
   def inner_join(%QueryBuilder.Query{} = query, assoc_fields) do
-    %{
-      query
-      | operations: [{:inner_join, assoc_fields, []} | query.operations]
-    }
+    QueryBuilder.JoinOps.inner_join(query, assoc_fields)
   end
 
   def inner_join(ecto_query, assoc_fields) do
@@ -2549,15 +1447,7 @@ defmodule QueryBuilder do
   def left_join(query, assoc_fields, filters \\ [], or_filters \\ [])
 
   def left_join(%QueryBuilder.Query{} = query, assoc_fields, filters, or_filters) do
-    if assoc_fields_nested?(assoc_fields) do
-      raise ArgumentError,
-            "left_join/4 does not support nested association paths (it would be ambiguous whether intermediate hops " <>
-              "should be inner-joined or left-joined). " <>
-              "Use `left_join_leaf/4` for “INNER path + LEFT leaf”, or `left_join_path/4` for “LEFT every hop”. " <>
-              "Got: #{inspect(assoc_fields)}"
-    end
-
-    left_join_leaf(query, assoc_fields, filters, or_filters)
+    QueryBuilder.JoinOps.left_join(query, assoc_fields, filters, or_filters)
   end
 
   def left_join(ecto_query, assoc_fields, filters, or_filters) do
@@ -2581,31 +1471,7 @@ defmodule QueryBuilder do
   def left_join_leaf(query, assoc_fields, filters \\ [], or_filters \\ [])
 
   def left_join_leaf(%QueryBuilder.Query{} = query, assoc_fields, filters, or_filters) do
-    if is_nil(filters) do
-      raise ArgumentError, "left_join_leaf/4 expects `filters` to be a list/keyword list, got nil"
-    end
-
-    if is_nil(or_filters) do
-      raise ArgumentError, "left_join_leaf/4 expects `or_filters` to be a keyword list, got nil"
-    end
-
-    filters = List.wrap(filters)
-    or_filters = List.wrap(or_filters)
-
-    join_filters =
-      if filters == [] and or_filters == [] do
-        []
-      else
-        [filters, or_filters]
-      end
-
-    %{
-      query
-      | operations: [
-          {:left_join, assoc_fields, [:leaf, join_filters]}
-          | query.operations
-        ]
-    }
+    QueryBuilder.JoinOps.left_join_leaf(query, assoc_fields, filters, or_filters)
   end
 
   def left_join_leaf(ecto_query, assoc_fields, filters, or_filters) do
@@ -2626,37 +1492,17 @@ defmodule QueryBuilder do
   def left_join_path(query, assoc_fields, filters \\ [], or_filters \\ [])
 
   def left_join_path(%QueryBuilder.Query{} = query, assoc_fields, filters, or_filters) do
-    if is_nil(filters) do
-      raise ArgumentError, "left_join_path/4 expects `filters` to be a list/keyword list, got nil"
-    end
-
-    if is_nil(or_filters) do
-      raise ArgumentError, "left_join_path/4 expects `or_filters` to be a keyword list, got nil"
-    end
-
-    filters = List.wrap(filters)
-    or_filters = List.wrap(or_filters)
-
-    join_filters =
-      if filters == [] and or_filters == [] do
-        []
-      else
-        [filters, or_filters]
-      end
-
-    %{
-      query
-      | operations: [
-          {:left_join, assoc_fields, [:path, join_filters]}
-          | query.operations
-        ]
-    }
+    QueryBuilder.JoinOps.left_join_path(query, assoc_fields, filters, or_filters)
   end
 
   def left_join_path(ecto_query, assoc_fields, filters, or_filters) do
     ecto_query = ensure_query_has_binding(ecto_query)
     left_join_path(%QueryBuilder.Query{ecto_query: ecto_query}, assoc_fields, filters, or_filters)
   end
+
+  # ----------------------------------------------------------------------------
+  # LATERAL Join Helpers (Postgres)
+  # ----------------------------------------------------------------------------
 
   @doc ~S"""
   Left-joins the latest row of a `has_many` association and selects `{root, assoc}`.
@@ -2799,6 +1645,10 @@ defmodule QueryBuilder do
           "left_join_top_n/3 expects `assoc_field` to be an atom (direct association), got: #{inspect(assoc_field)}"
   end
 
+  # ----------------------------------------------------------------------------
+  # from_opts
+  # ----------------------------------------------------------------------------
+
   @doc ~S"""
   Applies a keyword list of operations to a query.
 
@@ -2825,59 +1675,6 @@ defmodule QueryBuilder do
   ], mode: :full)
   ```
   """
-  @from_opts_supported_operations_boundary [
-    :where,
-    :where_any,
-    :order_by,
-    :limit,
-    :offset
-  ]
-
-  @from_opts_supported_operations_full [
-    :distinct,
-    :distinct_roots,
-    :group_by,
-    :having,
-    :having_any,
-    :first_per,
-    :inner_join,
-    :left_join,
-    :left_join_leaf,
-    :left_join_latest,
-    :left_join_top_n,
-    :left_join_path,
-    :limit,
-    :maybe_order_by,
-    :maybe_where,
-    :offset,
-    :order_by,
-    :preload_separate,
-    :preload_separate_scoped,
-    :preload_through_join,
-    :select,
-    :select_merge,
-    :top_n_per,
-    :where,
-    :where_any,
-    :where_has,
-    :where_exists,
-    :where_exists_subquery,
-    :where_missing,
-    :where_not_exists,
-    :where_not_exists_subquery
-  ]
-
-  @from_opts_supported_operations_boundary_string Enum.map_join(
-                                                    @from_opts_supported_operations_boundary,
-                                                    ", ",
-                                                    &inspect/1
-                                                  )
-
-  @from_opts_supported_operations_full_string Enum.map_join(
-                                                @from_opts_supported_operations_full,
-                                                ", ",
-                                                &inspect/1
-                                              )
 
   def from_opts(query, opts) do
     from_opts(query, opts, mode: :boundary)
@@ -2894,1046 +1691,13 @@ defmodule QueryBuilder do
 
   @doc false
   def __from_opts__(query, opts, apply_module, from_opts_opts) do
-    from_opts_opts = validate_from_opts_options!(from_opts_opts)
-    mode = Keyword.fetch!(from_opts_opts, :mode)
-    includes_allowlist = Keyword.fetch!(from_opts_opts, :includes)
-
-    {requested_includes, from_opts_ops} = extract_requested_includes_from_opts!(opts)
-
-    if requested_includes != [] and map_size(includes_allowlist) == 0 do
-      raise ArgumentError,
-            "from_opts/2 got `include:` but no `includes:` allowlist was provided to from_opts/3. " <>
-              "Define a context-owned allowlist (e.g. `includes: [role: :role]`) and pass include keys " <>
-              "via opts (e.g. `include: [:role]`). If you handle `include` yourself, remove it from opts " <>
-              "before calling `from_opts` (e.g. `{include, qb_opts} = Keyword.pop(opts, :include, [])`)."
-    end
-
-    extension_config =
-      if apply_module == __MODULE__ do
-        nil
-      else
-        extension_from_opts_config!(apply_module)
-      end
-
-    query
-    |> do_from_opts(from_opts_ops, apply_module, mode, extension_config)
-    |> apply_includes_allowlist!(requested_includes, includes_allowlist)
-  end
-
-  defp do_from_opts(query, nil, _apply_module, _mode, _extension_config), do: query
-  defp do_from_opts(query, [], _apply_module, _mode, _extension_config), do: query
-
-  defp do_from_opts(_query, opts, _apply_module, _mode, _extension_config)
-       when not is_list(opts) do
-    raise ArgumentError,
-          "from_opts/2 expects opts to be a keyword list like `[where: ...]`, got: #{inspect(opts)}"
-  end
-
-  defp do_from_opts(_query, [invalid | _] = opts, _apply_module, _mode, _extension_config)
-       when not is_tuple(invalid) or tuple_size(invalid) != 2 do
-    raise ArgumentError,
-          "from_opts/2 expects opts to be a keyword list (list of `{operation, value}` pairs); " <>
-            "got invalid entry: #{inspect(invalid)} in #{inspect(opts)}"
-  end
-
-  defp do_from_opts(
-         query,
-         [{operation, raw_arguments} | tail],
-         apply_module,
-         mode,
-         extension_config
-       ) do
-    unless is_atom(operation) do
-      raise ArgumentError,
-            "from_opts/2 expects operation keys to be atoms, got: #{inspect(operation)}"
-    end
-
-    if is_nil(raw_arguments) do
-      raise ArgumentError,
-            "from_opts/2 does not accept nil for #{inspect(operation)}; omit the operation or pass []"
-    end
-
-    if is_tuple(raw_arguments) do
-      validate_from_opts_tuple_arguments!(query, apply_module, operation, raw_arguments, mode)
-    end
-
-    arguments = normalize_from_opts_arguments!(raw_arguments, mode)
-    arity = 1 + length(arguments)
-
-    if apply_module == __MODULE__ do
-      validate_query_builder_from_opts_operation!(operation, arity, mode)
-    else
-      validate_extension_from_opts_operation!(
-        apply_module,
-        operation,
-        arity,
-        mode,
-        extension_config
-      )
-    end
-
-    if mode == :boundary and operation in @from_opts_supported_operations_boundary do
-      validate_from_opts_boundary_arguments!(operation, arguments)
-    end
-
-    result =
-      if apply_module == __MODULE__ and mode == :boundary do
-        [arg] = arguments
-
-        case operation do
-          :where ->
-            where(query, arg)
-
-          :where_any ->
-            where_any(query, arg)
-
-          :order_by ->
-            order_by(query, arg)
-
-          :limit ->
-            limit(query, arg)
-
-          :offset ->
-            offset(query, arg)
-
-          other ->
-            raise ArgumentError, "internal error: unsupported boundary op: #{inspect(other)}"
-        end
-      else
-        apply(apply_module, operation, [query | arguments])
-      end
-
-    do_from_opts(result, tail, apply_module, mode, extension_config)
-  end
-
-  defp normalize_from_opts_arguments!(raw_arguments, mode) do
-    case raw_arguments do
-      %QueryBuilder.Args{} when mode == :boundary ->
-        raise ArgumentError,
-              "from_opts/2 does not accept QueryBuilder.args/* wrappers in boundary mode; " <>
-                "pass a single argument (where/order_by/limit/offset) and avoid assoc traversal. " <>
-                "If you intended to use the full from_opts surface, pass `mode: :full`."
-
-      %QueryBuilder.Args{args: args} when is_list(args) and length(args) >= 2 ->
-        args
-
-      %QueryBuilder.Args{args: args} when is_list(args) ->
-        raise ArgumentError,
-              "from_opts/2 expects QueryBuilder.args/* to wrap at least 2 arguments, got: #{inspect(args)}"
-
-      %QueryBuilder.Args{} = args ->
-        raise ArgumentError,
-              "from_opts/2 expects QueryBuilder.args/* to wrap a list of arguments; got: #{inspect(args)}"
-
-      other ->
-        [other]
-    end
-  end
-
-  defp validate_query_builder_from_opts_operation!(operation, arity, mode) do
-    supported_operations =
-      case mode do
-        :boundary -> @from_opts_supported_operations_boundary
-        :full -> @from_opts_supported_operations_full
-      end
-
-    supported_operations_string =
-      case mode do
-        :boundary -> @from_opts_supported_operations_boundary_string
-        :full -> @from_opts_supported_operations_full_string
-      end
-
-    unless function_exported?(__MODULE__, operation, arity) do
-      raise ArgumentError,
-            "unknown operation #{inspect(operation)}/#{arity} in from_opts/2; " <>
-              "supported operations: #{supported_operations_string}"
-    end
-
-    unless operation in supported_operations do
-      extra =
-        if mode == :boundary do
-          " If you intended to use joins/preloads/assoc traversal, pass `mode: :full`."
-        else
-          ""
-        end
-
-      raise ArgumentError,
-            "operation #{inspect(operation)}/#{arity} is not supported in from_opts/2 (mode: #{inspect(mode)}); " <>
-              "supported operations: #{supported_operations_string}." <> extra
-    end
-  end
-
-  defp validate_extension_from_opts_operation!(
-         apply_module,
-         operation,
-         arity,
-         mode,
-         extension_config
-       ) do
-    supported_operations =
-      case mode do
-        :boundary -> @from_opts_supported_operations_boundary
-        :full -> @from_opts_supported_operations_full
-      end
-
-    supported_operations_string =
-      case mode do
-        :boundary -> @from_opts_supported_operations_boundary_string
-        :full -> @from_opts_supported_operations_full_string
-      end
-
-    extension_boundary_ops = Map.get(extension_config, :boundary_ops_user_asserted, [])
-
-    extension_full_ops =
-      Map.get(extension_config, :from_opts_full_ops, [])
-      |> Kernel.++(extension_boundary_ops)
-      |> Enum.uniq()
-
-    cond do
-      mode == :boundary and operation in supported_operations ->
-        :ok
-
-      mode == :boundary and operation in extension_boundary_ops ->
-        if function_exported?(__MODULE__, operation, arity) do
-          raise ArgumentError,
-                "operation #{inspect(operation)}/#{arity} is a QueryBuilder operation and is not supported in from_opts/2 (mode: :boundary). " <>
-                  "Use `mode: :full` instead of extending boundary mode."
-        end
-
-        :ok
-
-      mode == :boundary ->
-        raise ArgumentError,
-              "operation #{inspect(operation)}/#{arity} is not supported in from_opts/2 (mode: :boundary); " <>
-                "supported operations: #{supported_operations_string}. If you intended to use full mode, pass `mode: :full`."
-
-      mode == :full and function_exported?(__MODULE__, operation, arity) and
-          operation not in supported_operations ->
-        raise ArgumentError,
-              "operation #{inspect(operation)}/#{arity} is not supported in from_opts/2 (mode: :full); " <>
-                "supported operations: #{supported_operations_string}"
-
-      mode == :full and operation in supported_operations ->
-        :ok
-
-      mode == :full and operation in extension_full_ops ->
-        :ok
-
-      mode == :full ->
-        raise ArgumentError,
-              "operation #{inspect(operation)}/#{arity} is not supported in from_opts/2 (mode: :full) for #{inspect(apply_module)}. " <>
-                "To allow custom extension operations, pass `use QueryBuilder.Extension, from_opts_full_ops: [...]` when defining #{inspect(apply_module)}."
-    end
-
-    unless function_exported?(apply_module, operation, arity) do
-      available =
-        apply_module.__info__(:functions)
-        |> Enum.map(&elem(&1, 0))
-        |> Enum.uniq()
-        |> Enum.sort()
-        |> Enum.join(", ")
-
-      raise ArgumentError,
-            "unknown operation #{inspect(operation)}/#{arity} in from_opts/2; " <>
-              "expected a public function on #{inspect(apply_module)}. Available operations: #{available}"
-    end
-  end
-
-  defp extension_from_opts_config!(apply_module) do
-    config =
-      if function_exported?(apply_module, :__query_builder_extension_from_opts_config__, 0) do
-        apply(apply_module, :__query_builder_extension_from_opts_config__, [])
-      else
-        %{}
-      end
-
-    unless is_map(config) do
-      raise ArgumentError,
-            "#{inspect(apply_module)}.__query_builder_extension_from_opts_config__/0 must return a map, got: #{inspect(config)}"
-    end
-
-    validate_extension_config_ops_list!(apply_module, config, :from_opts_full_ops)
-    validate_extension_config_ops_list!(apply_module, config, :boundary_ops_user_asserted)
-
-    config
-  end
-
-  defp validate_extension_config_ops_list!(apply_module, config, key) do
-    case Map.get(config, key, []) do
-      list when is_list(list) ->
-        Enum.each(list, fn
-          op when is_atom(op) ->
-            :ok
-
-          other ->
-            raise ArgumentError,
-                  "#{inspect(apply_module)}.__query_builder_extension_from_opts_config__/0 expects #{inspect(key)} to be a list of atoms, got: #{inspect(other)} in #{inspect(list)}"
-        end)
-
-      other ->
-        raise ArgumentError,
-              "#{inspect(apply_module)}.__query_builder_extension_from_opts_config__/0 expects #{inspect(key)} to be a list of atoms, got: #{inspect(other)}"
-    end
-  end
-
-  defp validate_from_opts_tuple_arguments!(query, apply_module, operation, raw_arguments, mode) do
-    cond do
-      operation == :where and tuple_size(raw_arguments) < 2 ->
-        raise ArgumentError,
-              "from_opts/2 expects `where:` tuple filters to have at least 2 elements " <>
-                "(e.g. `{field, value}` or `{field, operator, value}`); got: #{inspect(raw_arguments)}"
-
-      # Migration guard: v1's from_list/from_opts expanded `{assoc_fields, filters, ...}` tuples
-      # into multi-arg calls. v2 treats tuple values as data, so we fail fast and point callers
-      # at the explicit wrapper (`QueryBuilder.args/*`).
-      operation == :where and from_opts_where_tuple_looks_like_assoc_pack?(query, raw_arguments) ->
-        raise ArgumentError,
-              "from_opts/2 does not treat `where: {assoc_fields, filters, ...}` as a multi-arg call. " <>
-                "Use `where: QueryBuilder.args(assoc_fields, filters, ...)` with `mode: :full` instead; " <>
-                "got: #{inspect(raw_arguments)}"
-
-      operation in [:where, :select] ->
-        :ok
-
-      operation in @from_opts_supported_operations_full ->
-        case mode do
-          :boundary ->
-            raise ArgumentError,
-                  "from_opts/2 boundary mode does not accept tuple values for #{inspect(operation)}. " <>
-                    "Pass a single argument value. If you intended a multi-arg call, use `mode: :full` " <>
-                    "and wrap arguments with `QueryBuilder.args/*`. Got: #{inspect(raw_arguments)}"
-
-          :full ->
-            raise ArgumentError,
-                  "from_opts/2 does not accept tuple values for #{inspect(operation)}. " <>
-                    "If you intended to call #{inspect(operation)} with multiple arguments, " <>
-                    "wrap them with `QueryBuilder.args/*`. Got: #{inspect(raw_arguments)}"
-        end
-
-      apply_module != __MODULE__ and
-        function_exported?(apply_module, operation, tuple_size(raw_arguments) + 1) and
-          not function_exported?(apply_module, operation, 2) ->
-        case mode do
-          :boundary ->
-            raise ArgumentError,
-                  "from_opts/2 boundary mode does not expand tuple values into multiple arguments for #{inspect(operation)}. " <>
-                    "Pass a single argument value. If you intended a multi-arg call, use `mode: :full` " <>
-                    "and wrap arguments with `#{inspect(apply_module)}.args/*` (or `QueryBuilder.args/*`). " <>
-                    "Got: #{inspect(raw_arguments)}"
-
-          :full ->
-            raise ArgumentError,
-                  "from_opts/2 does not expand tuple values into multiple arguments for #{inspect(operation)}. " <>
-                    "Use `#{inspect(apply_module)}.args/*` (or `QueryBuilder.args/*`) to wrap multiple arguments; " <>
-                    "got: #{inspect(raw_arguments)}"
-        end
-
-      true ->
-        :ok
-    end
+    QueryBuilder.FromOpts.apply(query, opts, apply_module, from_opts_opts)
   end
 
   # Migration shim: v1 exposed from_list/2. Keep it to raise with a clear upgrade hint.
   def from_list(_query, _opts) do
     raise ArgumentError,
           "from_list/2 was renamed to from_opts/2; please update your call sites"
-  end
-
-  @doc false
-  def from_opts_supported_operations(), do: @from_opts_supported_operations_boundary
-
-  @doc false
-  def from_opts_supported_operations(:boundary), do: @from_opts_supported_operations_boundary
-
-  @doc false
-  def from_opts_supported_operations(:full), do: @from_opts_supported_operations_full
-
-  # Migration helper: distinguish where filter tuples (data) from the old v1 "assoc_fields pack"
-  # tuple that used to mean "call where/3 or where/4". This lets `from_opts/2` raise a targeted
-  # error instead of silently changing meaning.
-  defp from_opts_where_tuple_looks_like_assoc_pack?(query, tuple) when is_tuple(tuple) do
-    if tuple_size(tuple) < 2 do
-      false
-    else
-      assoc_fields = elem(tuple, 0)
-      second = elem(tuple, 1)
-
-      cond do
-        is_list(assoc_fields) ->
-          true
-
-        # Likely a filter tuple: {field, operator, value} / {field, operator, value, opts}
-        is_atom(assoc_fields) and tuple_size(tuple) >= 3 and is_atom(second) ->
-          false
-
-        # Likely a filter tuple: {field, value} (scalar value)
-        is_atom(assoc_fields) and tuple_size(tuple) == 2 and not is_list(second) ->
-          false
-
-        is_atom(assoc_fields) ->
-          source_schema = QueryBuilder.Utils.root_schema(query)
-          assoc_fields in source_schema.__schema__(:associations)
-
-        true ->
-          false
-      end
-    end
-  end
-
-  defp normalize_or_groups!(or_groups, opt_key, context) do
-    cond do
-      is_nil(or_groups) ->
-        raise ArgumentError,
-              "#{context} expects `#{opt_key}:` to be a list of filter groups; got nil"
-
-      Keyword.keyword?(or_groups) ->
-        raise ArgumentError,
-              "#{context} expects `#{opt_key}:` to be a list of filter groups like `[[...], [...]]`; " <>
-                "got a keyword list. Wrap it in a list if you intended a single group."
-
-      not is_list(or_groups) ->
-        raise ArgumentError,
-              "#{context} expects `#{opt_key}:` to be a list of filter groups like `[[...], [...]]`; got: #{inspect(or_groups)}"
-
-      Enum.any?(or_groups, &(not is_list(&1))) ->
-        raise ArgumentError,
-              "#{context} expects `#{opt_key}:` groups to be lists (e.g. `[[title: \"A\"], [title: \"B\"]]`); got: #{inspect(or_groups)}"
-
-      true ->
-        or_groups
-    end
-  end
-
-  defp validate_from_opts_options!(opts) when is_list(opts) do
-    unless Keyword.keyword?(opts) do
-      raise ArgumentError,
-            "from_opts/3 expects options to be a keyword list like `[mode: :boundary]`, got: #{inspect(opts)}"
-    end
-
-    mode = Keyword.get(opts, :mode, :boundary)
-
-    includes_allowlist =
-      normalize_from_opts_includes_allowlist!(Keyword.get(opts, :includes, %{}))
-
-    unless mode in [:boundary, :full] do
-      raise ArgumentError,
-            "from_opts/3 expects `mode:` to be :boundary or :full, got: #{inspect(mode)}"
-    end
-
-    case Keyword.keys(opts) -- [:mode, :includes] do
-      [] ->
-        :ok
-
-      unknown ->
-        raise ArgumentError,
-              "from_opts/3 got unknown options #{inspect(unknown)}; supported options: [:mode, :includes]"
-    end
-
-    [mode: mode, includes: includes_allowlist]
-  end
-
-  defp validate_from_opts_options!(opts) do
-    raise ArgumentError,
-          "from_opts/3 expects options to be a keyword list like `[mode: :boundary]`, got: #{inspect(opts)}"
-  end
-
-  defp normalize_from_opts_includes_allowlist!(nil) do
-    raise ArgumentError, "from_opts/3 expects `includes:` to be a keyword list or a map, got nil"
-  end
-
-  defp normalize_from_opts_includes_allowlist!(allowlist)
-       when allowlist == %{} or allowlist == [] do
-    %{}
-  end
-
-  defp normalize_from_opts_includes_allowlist!(allowlist) when is_list(allowlist) do
-    unless Keyword.keyword?(allowlist) do
-      raise ArgumentError,
-            "from_opts/3 expects `includes:` to be a keyword list or a map, got: #{inspect(allowlist)}"
-    end
-
-    keys = Keyword.keys(allowlist)
-
-    if Enum.uniq(keys) != keys do
-      raise ArgumentError,
-            "from_opts/3 expects `includes:` keys to be unique, got: #{inspect(keys)}"
-    end
-
-    allowlist
-    |> Enum.reduce(%{}, fn {include_key, include_spec}, acc ->
-      unless is_atom(include_key) do
-        raise ArgumentError,
-              "from_opts/3 expects `includes:` keys to be atoms, got: #{inspect(include_key)}"
-      end
-
-      Map.put(acc, include_key, normalize_from_opts_include_spec!(include_key, include_spec))
-    end)
-  end
-
-  defp normalize_from_opts_includes_allowlist!(allowlist) when is_map(allowlist) do
-    allowlist
-    |> Enum.reduce(%{}, fn {include_key, include_spec}, acc ->
-      unless is_atom(include_key) do
-        raise ArgumentError,
-              "from_opts/3 expects `includes:` keys to be atoms, got: #{inspect(include_key)}"
-      end
-
-      Map.put(acc, include_key, normalize_from_opts_include_spec!(include_key, include_spec))
-    end)
-  end
-
-  defp normalize_from_opts_includes_allowlist!(other) do
-    raise ArgumentError,
-          "from_opts/3 expects `includes:` to be a keyword list or a map, got: #{inspect(other)}"
-  end
-
-  defp normalize_from_opts_include_spec!(_include_key, include_spec)
-       when is_function(include_spec) do
-    raise ArgumentError,
-          "from_opts/3 does not accept function include handlers in `includes:`; " <>
-            "use a declarative preload spec (e.g. `:role`, `{:preload_separate, ...}`, `{:preload_separate_scoped, ...}`, `{:preload_through_join, ...}`)"
-  end
-
-  defp normalize_from_opts_include_spec!(_include_key, include_spec)
-       when is_atom(include_spec) or is_list(include_spec) do
-    {:preload_separate, include_spec}
-  end
-
-  defp normalize_from_opts_include_spec!(_include_key, {:preload_separate, assoc_fields}) do
-    {:preload_separate, assoc_fields}
-  end
-
-  defp normalize_from_opts_include_spec!(
-         _include_key,
-         {:preload_separate_scoped, assoc_field, opts}
-       ) do
-    {:preload_separate_scoped, assoc_field, opts}
-  end
-
-  defp normalize_from_opts_include_spec!(_include_key, {:preload_through_join, assoc_fields}) do
-    {:preload_through_join, assoc_fields}
-  end
-
-  defp normalize_from_opts_include_spec!(include_key, other) do
-    raise ArgumentError,
-          "from_opts/3 got an invalid include spec for #{inspect(include_key)} in `includes:`: #{inspect(other)}. " <>
-            "Expected an assoc tree (atom/keyword list), `{:preload_separate, assoc_fields}`, " <>
-            "`{:preload_separate_scoped, assoc_field, opts}`, or `{:preload_through_join, assoc_fields}`."
-  end
-
-  defp extract_requested_includes_from_opts!(opts) do
-    cond do
-      is_nil(opts) ->
-        {[], nil}
-
-      opts == [] ->
-        {[], []}
-
-      not is_list(opts) ->
-        raise ArgumentError,
-              "from_opts/2 expects opts to be a keyword list like `[where: ...]`, got: #{inspect(opts)}"
-
-      true ->
-        {includes_rev, rest_rev} =
-          Enum.reduce(opts, {[], []}, fn
-            {:include, value}, {includes_rev, rest_rev} ->
-              include_keys = normalize_requested_include_keys!(value)
-
-              includes_rev = Enum.reverse(include_keys, includes_rev)
-
-              {includes_rev, rest_rev}
-
-            {_, _} = entry, {includes_rev, rest_rev} ->
-              {includes_rev, [entry | rest_rev]}
-
-            invalid, _acc ->
-              raise ArgumentError,
-                    "from_opts/2 expects opts to be a keyword list (list of `{operation, value}` pairs); " <>
-                      "got invalid entry: #{inspect(invalid)} in #{inspect(opts)}"
-          end)
-
-        {Enum.reverse(includes_rev), Enum.reverse(rest_rev)}
-    end
-  end
-
-  defp normalize_requested_include_keys!(nil) do
-    raise ArgumentError,
-          "from_opts/2 does not accept nil for :include; omit the key or pass `include: []`"
-  end
-
-  defp normalize_requested_include_keys!([]), do: []
-
-  defp normalize_requested_include_keys!(key) when is_atom(key) or is_binary(key), do: [key]
-
-  defp normalize_requested_include_keys!(keys) when is_list(keys) do
-    Enum.each(keys, fn
-      key when is_atom(key) or is_binary(key) ->
-        :ok
-
-      other ->
-        raise ArgumentError,
-              "from_opts/2 expects `include:` to be a list of atoms/strings, got: #{inspect(other)} in #{inspect(keys)}"
-    end)
-
-    keys
-  end
-
-  defp normalize_requested_include_keys!(other) do
-    raise ArgumentError,
-          "from_opts/2 expects `include:` to be a list of include keys (atoms/strings), got: #{inspect(other)}"
-  end
-
-  defp apply_includes_allowlist!(query, [], _allowlist), do: query
-
-  defp apply_includes_allowlist!(query, requested_includes, allowlist) when is_map(allowlist) do
-    allowed_keys = Map.keys(allowlist)
-
-    string_to_atom =
-      if Enum.any?(requested_includes, &is_binary/1) do
-        Map.new(allowed_keys, fn key -> {Atom.to_string(key), key} end)
-      else
-        %{}
-      end
-
-    {_, query} =
-      Enum.reduce(requested_includes, {MapSet.new(), query}, fn include_key, {seen, acc} ->
-        include_key =
-          normalize_requested_include_key!(
-            include_key,
-            allowlist,
-            string_to_atom
-          )
-
-        if MapSet.member?(seen, include_key) do
-          {seen, acc}
-        else
-          include_spec = Map.fetch!(allowlist, include_key)
-
-          acc =
-            case include_spec do
-              {:preload_separate, assoc_fields} ->
-                preload_separate(acc, assoc_fields)
-
-              {:preload_separate_scoped, assoc_field, opts} ->
-                preload_separate_scoped(acc, assoc_field, opts)
-
-              {:preload_through_join, assoc_fields} ->
-                preload_through_join(acc, assoc_fields)
-            end
-
-          {MapSet.put(seen, include_key), acc}
-        end
-      end)
-
-    query
-  end
-
-  defp normalize_requested_include_key!(include_key, allowlist, string_to_atom) do
-    {normalized_key, raw_key_for_error} =
-      cond do
-        is_atom(include_key) ->
-          {include_key, include_key}
-
-        is_binary(include_key) ->
-          {Map.get(string_to_atom, include_key), include_key}
-
-        true ->
-          raise ArgumentError,
-                "from_opts/2 expects include keys to be atoms/strings, got: #{inspect(include_key)}"
-      end
-
-    if is_nil(normalized_key) or not Map.has_key?(allowlist, normalized_key) do
-      allowed_includes_string =
-        allowlist
-        |> Map.keys()
-        |> Enum.sort()
-        |> Enum.map_join(", ", &inspect/1)
-
-      raise ArgumentError,
-            "from_opts/2 got unknown include key #{inspect(raw_key_for_error)}; allowed includes: #{allowed_includes_string}"
-    end
-
-    normalized_key
-  end
-
-  defp validate_from_opts_boundary_arguments!(:where, [filters]) do
-    validate_from_opts_boundary_filters!(filters, "where")
-  end
-
-  defp validate_from_opts_boundary_arguments!(:where_any, [or_groups]) do
-    validate_from_opts_boundary_or_groups!(or_groups, "where_any")
-  end
-
-  defp validate_from_opts_boundary_arguments!(:order_by, [value]) do
-    validate_from_opts_boundary_order_by!(value)
-  end
-
-  defp validate_from_opts_boundary_arguments!(:limit, [value]) do
-    validate_from_opts_boundary_non_negative_limit_offset!(value, :limit)
-  end
-
-  defp validate_from_opts_boundary_arguments!(:offset, [value]) do
-    validate_from_opts_boundary_non_negative_limit_offset!(value, :offset)
-  end
-
-  defp validate_from_opts_boundary_arguments!(operation, _arguments) do
-    raise ArgumentError,
-          "operation #{inspect(operation)} is not supported in from_opts/2 (mode: :boundary); " <>
-            "supported operations: #{@from_opts_supported_operations_boundary_string}. " <>
-            "If you intended to use full mode, pass `mode: :full`."
-  end
-
-  defp validate_from_opts_boundary_non_negative_limit_offset!(value, operation)
-       when operation in [:limit, :offset] and is_integer(value) do
-    if value < 0 do
-      raise ArgumentError,
-            "from_opts/2 boundary mode expects #{operation} to be non-negative, got: #{inspect(value)}"
-    end
-
-    :ok
-  end
-
-  defp validate_from_opts_boundary_non_negative_limit_offset!(value, operation)
-       when operation in [:limit, :offset] and is_binary(value) do
-    trimmed = String.trim(value)
-
-    case Integer.parse(trimmed) do
-      {int_value, ""} when int_value < 0 ->
-        raise ArgumentError,
-              "from_opts/2 boundary mode expects #{operation} to be non-negative, got: #{inspect(value)}"
-
-      _ ->
-        :ok
-    end
-  end
-
-  defp validate_from_opts_boundary_non_negative_limit_offset!(_value, _operation), do: :ok
-
-  defp validate_from_opts_boundary_or_groups!(or_groups, context) do
-    or_groups = normalize_or_groups!(or_groups, :where_any, "#{context} boundary validation")
-    Enum.each(or_groups, &validate_from_opts_boundary_filters!(&1, context))
-    :ok
-  end
-
-  defp validate_from_opts_boundary_filters!(filters, context) do
-    cond do
-      filters == [] ->
-        :ok
-
-      is_list(filters) ->
-        Enum.each(filters, &validate_from_opts_boundary_filter!(&1, context))
-
-      is_tuple(filters) ->
-        validate_from_opts_boundary_filter!(filters, context)
-
-      is_function(filters) ->
-        raise ArgumentError,
-              "from_opts/2 boundary mode does not allow function filters in #{context}; " <>
-                "use explicit QueryBuilder calls instead"
-
-      true ->
-        raise ArgumentError,
-              "from_opts/2 boundary mode expects #{context} filters to be a keyword list, a list of filters, or a filter tuple; " <>
-                "got: #{inspect(filters)}"
-    end
-  end
-
-  defp validate_from_opts_boundary_filter!(%QueryBuilder.Aggregate{} = aggregate, context) do
-    raise ArgumentError,
-          "from_opts/2 boundary mode does not allow aggregate expressions in #{context}: #{inspect(aggregate)}"
-  end
-
-  defp validate_from_opts_boundary_filter!(
-         {%QueryBuilder.Aggregate{} = aggregate, _value},
-         context
-       ) do
-    raise ArgumentError,
-          "from_opts/2 boundary mode does not allow aggregate expressions in #{context}: #{inspect(aggregate)}"
-  end
-
-  defp validate_from_opts_boundary_filter!(
-         {%QueryBuilder.Aggregate{} = aggregate, _operator, _value},
-         context
-       ) do
-    raise ArgumentError,
-          "from_opts/2 boundary mode does not allow aggregate expressions in #{context}: #{inspect(aggregate)}"
-  end
-
-  defp validate_from_opts_boundary_filter!(
-         {%QueryBuilder.Aggregate{} = aggregate, _operator, _value, _opts},
-         context
-       ) do
-    raise ArgumentError,
-          "from_opts/2 boundary mode does not allow aggregate expressions in #{context}: #{inspect(aggregate)}"
-  end
-
-  defp validate_from_opts_boundary_filter!(fun, context) when is_function(fun) do
-    raise ArgumentError,
-          "from_opts/2 boundary mode does not allow function filters in #{context}; " <>
-            "use explicit QueryBuilder calls instead"
-  end
-
-  defp validate_from_opts_boundary_filter!({field, value}, context) do
-    validate_from_opts_boundary_token!(field, context)
-    validate_from_opts_boundary_filter_value!(value, context)
-    :ok
-  end
-
-  defp validate_from_opts_boundary_filter!({field, operator, value}, context) do
-    validate_from_opts_boundary_filter!({field, operator, value, []}, context)
-  end
-
-  defp validate_from_opts_boundary_filter!({field, operator, value, _operator_opts}, context)
-       when is_atom(operator) do
-    validate_from_opts_boundary_token!(field, context)
-    validate_from_opts_boundary_filter_value!(value, context)
-    :ok
-  end
-
-  defp validate_from_opts_boundary_filter!({field, operator, _value, _operator_opts}, context) do
-    raise ArgumentError,
-          "from_opts/2 boundary mode expects #{context} filter operators to be atoms, got: #{inspect(operator)} for field #{inspect(field)}"
-  end
-
-  defp validate_from_opts_boundary_filter!(other, context) do
-    raise ArgumentError,
-          "from_opts/2 boundary mode received an invalid #{context} filter: #{inspect(other)}"
-  end
-
-  defp validate_from_opts_boundary_filter_value!(value, context)
-       when is_struct(value, Ecto.Query) or is_struct(value, Ecto.SubQuery) or
-              is_struct(value, QueryBuilder.Query) do
-    raise ArgumentError,
-          "from_opts/2 boundary mode does not allow subqueries in #{context} filters; got: #{inspect(value)}"
-  end
-
-  defp validate_from_opts_boundary_filter_value!(value, context)
-       when is_struct(value, Ecto.Query.DynamicExpr) do
-    raise ArgumentError,
-          "from_opts/2 boundary mode does not allow dynamic expressions in #{context} filters; got: #{inspect(value)}"
-  end
-
-  defp validate_from_opts_boundary_filter_value!(value, context) when is_atom(value) do
-    str = Atom.to_string(value)
-
-    if String.ends_with?(str, "@self") do
-      referenced = binary_part(str, 0, byte_size(str) - byte_size("@self"))
-
-      if String.contains?(referenced, "@") do
-        raise ArgumentError,
-              "from_opts/2 boundary mode does not allow assoc tokens in field-to-field filters in #{context}; got: #{inspect(value)}"
-      end
-    end
-
-    :ok
-  end
-
-  defp validate_from_opts_boundary_filter_value!(_value, _context), do: :ok
-
-  defp validate_from_opts_boundary_order_by!(value) do
-    cond do
-      value == [] ->
-        :ok
-
-      is_list(value) ->
-        Enum.each(value, &validate_from_opts_boundary_order_expr!/1)
-
-      true ->
-        raise ArgumentError,
-              "from_opts/2 boundary mode expects order_by to be a keyword list (or list of order expressions), got: #{inspect(value)}"
-    end
-  end
-
-  defp validate_from_opts_boundary_order_expr!({direction, expr}) when is_atom(direction) do
-    validate_from_opts_boundary_order_expr_value!(expr)
-  end
-
-  defp validate_from_opts_boundary_order_expr!(other) do
-    raise ArgumentError,
-          "from_opts/2 boundary mode received an invalid order_by expression: #{inspect(other)}"
-  end
-
-  defp validate_from_opts_boundary_order_expr_value!(%QueryBuilder.Aggregate{} = aggregate) do
-    raise ArgumentError,
-          "from_opts/2 boundary mode does not allow aggregates in order_by: #{inspect(aggregate)}"
-  end
-
-  defp validate_from_opts_boundary_order_expr_value!(%Ecto.Query.DynamicExpr{} = dynamic) do
-    raise ArgumentError,
-          "from_opts/2 boundary mode does not allow dynamic expressions in order_by: #{inspect(dynamic)}"
-  end
-
-  defp validate_from_opts_boundary_order_expr_value!(fun) when is_function(fun) do
-    raise ArgumentError,
-          "from_opts/2 boundary mode does not allow function order_by expressions; " <>
-            "use explicit QueryBuilder calls instead"
-  end
-
-  defp validate_from_opts_boundary_order_expr_value!(token)
-       when is_atom(token) or is_binary(token) do
-    validate_from_opts_boundary_token!(token, "order_by")
-    :ok
-  end
-
-  defp validate_from_opts_boundary_order_expr_value!(other) do
-    raise ArgumentError,
-          "from_opts/2 boundary mode expects order_by expressions to be tokens (atoms/strings), got: #{inspect(other)}"
-  end
-
-  defp validate_from_opts_boundary_token!(token, context)
-       when is_atom(token) or is_binary(token) do
-    if token |> to_string() |> String.contains?("@") do
-      raise ArgumentError,
-            "from_opts/2 boundary mode does not allow assoc tokens (field@assoc) in #{context}: #{inspect(token)}"
-    end
-
-    :ok
-  end
-
-  defp validate_from_opts_boundary_token!(token, context) do
-    raise ArgumentError,
-          "from_opts/2 boundary mode expects #{context} field tokens to be atoms or strings, got: #{inspect(token)}"
-  end
-
-  defp normalize_preload_separate_scoped_opts!(opts, assoc_field) do
-    unless Keyword.keyword?(opts) do
-      raise ArgumentError,
-            "preload_separate_scoped/3 expects opts to be a keyword list, got: #{inspect(opts)}"
-    end
-
-    allowed_keys = [:where, :order_by]
-
-    unknown =
-      opts
-      |> Keyword.keys()
-      |> Enum.uniq()
-      |> Enum.reject(&(&1 in allowed_keys))
-
-    if unknown != [] do
-      raise ArgumentError,
-            "preload_separate_scoped/3 got unknown options #{inspect(unknown)} for " <>
-              "#{inspect(assoc_field)} (supported: :where, :order_by)"
-    end
-
-    where_filters = Keyword.get(opts, :where, [])
-    order_by = Keyword.get(opts, :order_by, [])
-
-    validate_scoped_preload_where_filters!(assoc_field, where_filters)
-    validate_scoped_preload_order_by!(assoc_field, order_by)
-
-    if where_filters == [] and order_by == [] do
-      nil
-    else
-      [where: where_filters, order_by: order_by]
-    end
-  end
-
-  defp validate_scoped_preload_where_filters!(assoc_field, nil) do
-    raise ArgumentError,
-          "preload_separate_scoped/3 expects `where:` to be a keyword list (or list of filters) for " <>
-            "#{inspect(assoc_field)}, got nil"
-  end
-
-  defp validate_scoped_preload_where_filters!(assoc_field, filters) do
-    filters = List.wrap(filters)
-
-    Enum.each(filters, fn
-      fun when is_function(fun) ->
-        raise ArgumentError,
-              "preload_separate_scoped/3 does not accept custom filter functions in `where:` for " <>
-                "#{inspect(assoc_field)}; use an explicit Ecto preload query instead"
-
-      %QueryBuilder.Aggregate{} = aggregate ->
-        raise ArgumentError,
-              "preload_separate_scoped/3 does not accept aggregate filters in `where:` for " <>
-                "#{inspect(assoc_field)}; got: #{inspect(aggregate)}"
-
-      {%QueryBuilder.Aggregate{} = aggregate, _value} ->
-        raise ArgumentError,
-              "preload_separate_scoped/3 does not accept aggregate filters in `where:` for " <>
-                "#{inspect(assoc_field)}; got: #{inspect(aggregate)}"
-
-      {field, value} ->
-        validate_scoped_preload_field_token!(assoc_field, field)
-        validate_scoped_preload_value_token!(assoc_field, value)
-
-      {field, _operator, value} ->
-        validate_scoped_preload_field_token!(assoc_field, field)
-        validate_scoped_preload_value_token!(assoc_field, value)
-
-      {field, _operator, value, _operator_opts} ->
-        validate_scoped_preload_field_token!(assoc_field, field)
-        validate_scoped_preload_value_token!(assoc_field, value)
-
-      other ->
-        raise ArgumentError,
-              "preload_separate_scoped/3 got an invalid `where:` entry for #{inspect(assoc_field)}: " <>
-                "#{inspect(other)}"
-    end)
-  end
-
-  defp validate_scoped_preload_order_by!(assoc_field, nil) do
-    raise ArgumentError,
-          "preload_separate_scoped/3 expects `order_by:` to be a keyword list for " <>
-            "#{inspect(assoc_field)}, got nil"
-  end
-
-  defp validate_scoped_preload_order_by!(assoc_field, order_by) do
-    unless Keyword.keyword?(order_by) do
-      raise ArgumentError,
-            "preload_separate_scoped/3 expects `order_by:` to be a keyword list for " <>
-              "#{inspect(assoc_field)}, got: #{inspect(order_by)}"
-    end
-
-    Enum.each(order_by, fn
-      {direction, field} when is_atom(direction) and is_atom(field) ->
-        validate_scoped_preload_field_token!(assoc_field, field)
-
-      {direction, other} when is_atom(direction) ->
-        raise ArgumentError,
-              "preload_separate_scoped/3 expects `order_by:` fields to be tokens (atoms) for " <>
-                "#{inspect(assoc_field)}, got: #{inspect(other)}"
-
-      other ->
-        raise ArgumentError,
-              "preload_separate_scoped/3 expects `order_by:` entries to be `{direction, token}` for " <>
-                "#{inspect(assoc_field)}, got: #{inspect(other)}"
-    end)
-  end
-
-  defp validate_scoped_preload_field_token!(assoc_field, field) when is_atom(field) do
-    token = Atom.to_string(field)
-
-    if String.contains?(token, "@") do
-      raise ArgumentError,
-            "preload_separate_scoped/3 does not allow assoc tokens (containing `@`) for " <>
-              "#{inspect(assoc_field)}; got: #{inspect(field)}"
-    end
-  end
-
-  defp validate_scoped_preload_field_token!(assoc_field, other) do
-    raise ArgumentError,
-          "preload_separate_scoped/3 expects field tokens to be atoms for " <>
-            "#{inspect(assoc_field)}, got: #{inspect(other)}"
-  end
-
-  defp validate_scoped_preload_value_token!(_assoc_field, value) when not is_atom(value), do: :ok
-
-  defp validate_scoped_preload_value_token!(assoc_field, value) when is_atom(value) do
-    marker = "@self"
-    value_str = Atom.to_string(value)
-
-    if String.ends_with?(value_str, marker) do
-      referenced = binary_part(value_str, 0, byte_size(value_str) - byte_size(marker))
-
-      if String.contains?(referenced, "@") do
-        raise ArgumentError,
-              "preload_separate_scoped/3 does not allow assoc tokens (containing `@`) in field-to-field " <>
-                "filters for #{inspect(assoc_field)}; got: #{inspect(value)}"
-      end
-    end
-
-    :ok
   end
 
   defp validate_exists_subquery_filters!(filters, context) do
@@ -4080,14 +1844,5 @@ defmodule QueryBuilder do
       raise ArgumentError,
             "expected an Ecto.Queryable (schema module, Ecto.Query, or QueryBuilder.Query), got: #{inspect(query)}"
     end
-  end
-
-  defp assoc_fields_nested?(assoc_fields) do
-    assoc_fields
-    |> List.wrap()
-    |> Enum.any?(fn
-      {_field, nested_assoc_fields} -> nested_assoc_fields != []
-      _ -> false
-    end)
   end
 end
