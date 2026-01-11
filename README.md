@@ -231,7 +231,7 @@ Add `query_builder` as a dependency:
 ```elixir
 def deps do
   [
-    {:query_builder, "~> 2.0.0"}
+    {:query_builder, "~> 2.1.0"}
   ]
 end
 ```
