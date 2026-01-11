@@ -1,6 +1,8 @@
 defmodule QueryBuilder.Pagination.CursorCodec do
   @moduledoc false
 
+  @max_encoded_cursor_bytes 8_192
+
   def encode_cursor(cursor_map) when is_map(cursor_map) do
     cursor_map
     |> Jason.encode!()
@@ -13,6 +15,12 @@ defmodule QueryBuilder.Pagination.CursorCodec do
     if cursor == "" do
       raise ArgumentError,
             "paginate_cursor/3 cursor cannot be an empty string; omit `cursor:` (or pass `nil`) for the first page"
+    end
+
+    if byte_size(cursor) > @max_encoded_cursor_bytes do
+      raise ArgumentError,
+            "paginate_cursor/3 cursor is too large (max #{@max_encoded_cursor_bytes} bytes); " <>
+              "got #{byte_size(cursor)} bytes"
     end
 
     decoded_string =

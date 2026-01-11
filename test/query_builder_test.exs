@@ -2169,6 +2169,16 @@ defmodule QueryBuilderTest do
     end
   end
 
+  test "cursor pagination raises on oversized cursor string" do
+    query = QueryBuilder.order_by(User, asc: :nickname)
+
+    oversized_cursor = String.duplicate("a", 8_193)
+
+    assert_raise ArgumentError, ~r/cursor is too large/, fn ->
+      QueryBuilder.paginate(query, Repo, page_size: 3, cursor: oversized_cursor, direction: :after)
+    end
+  end
+
   test "cursor pagination raises on unknown repo adapter when using :asc/:desc (NULL ordering)" do
     query = QueryBuilder.order_by(User, asc: :nickname)
 
