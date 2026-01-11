@@ -95,7 +95,7 @@ defmodule QueryBuilder.Pagination.Cursor.StrategySelection do
       raise ArgumentError,
             "paginate_cursor/3 requires the root schema to have a primary key so it can append a stable tie-breaker " <>
               "and reload unique root rows; got schema with no primary key: #{inspect(root_schema)}. " <>
-              "Use `paginate_offset/3` for offset/row pagination (no cursor)."
+              "If you truly need raw SQL-row pagination, use `limit/2` + `offset/2` directly on an Ecto query."
     end
 
     :ok
