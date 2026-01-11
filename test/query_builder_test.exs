@@ -1045,6 +1045,27 @@ defmodule QueryBuilderTest do
     end
   end
 
+  describe "has_through associations" do
+    test "supports nested assoc traversal through has_through associations" do
+      author = insert(:user, %{name: "HasThroughAuthor"})
+      liker = insert(:user, %{name: "HasThroughLiker"})
+
+      article = insert(:article, %{author: author, publisher: author})
+      comment = insert(:comment, %{article: article, user: author, title: "HasThroughComment"})
+      _like = insert(:comment_like, %{comment: comment, article: article, user: liker})
+
+      users =
+        User
+        |> QueryBuilder.where([authored_comments: :comment_likes],
+          title@authored_comments: "HasThroughComment",
+          user_id@comment_likes: liker.id
+        )
+        |> Repo.all()
+
+      assert Enum.map(users, & &1.id) == [author.id]
+    end
+  end
+
   test "subquery/2 builds an Ecto.SubQuery from QueryBuilder ops" do
     ids_subquery =
       QueryBuilder.subquery(User,

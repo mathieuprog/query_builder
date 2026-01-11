@@ -13,6 +13,7 @@ defmodule QueryBuilder.User do
     has_one(:setting, QueryBuilder.UserSetting)
     has_many(:authored_articles, QueryBuilder.Article, foreign_key: :author_id)
     has_many(:published_articles, QueryBuilder.Article, foreign_key: :publisher_id)
+    has_many(:authored_comments, through: [:authored_articles, :comments])
     has_many(:acl_grantee, QueryBuilder.Acl, foreign_key: :grantee_id)
     has_many(:acl_grantor, QueryBuilder.Acl, foreign_key: :grantor_id)
 

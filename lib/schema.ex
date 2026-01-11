@@ -80,11 +80,6 @@ defmodule QueryBuilder.Schema do
         {name, binding}
       end)
 
-    assoc_infos =
-      Enum.map(assocs, fn {name, struct} ->
-        {name, struct.queryable, struct.cardinality}
-      end)
-
     binding_clauses =
       for {assoc_field, binding} <- assoc_bindings do
         quote do
@@ -107,16 +102,33 @@ defmodule QueryBuilder.Schema do
       end
 
     schema_clauses =
-      for {assoc_field, assoc_schema, _cardinality} <- assoc_infos do
-        quote do
-          def _assoc_schema(unquote(assoc_field)), do: unquote(assoc_schema)
+      for {assoc_field, assoc_struct} <- assocs do
+        case assoc_struct do
+          %Ecto.Association.HasThrough{through: through} when is_list(through) ->
+            through = Macro.escape(through)
+
+            quote do
+              def _assoc_schema(unquote(assoc_field)) do
+                QueryBuilder.Schema.has_through_queryable!(__MODULE__, unquote(through))
+              end
+            end
+
+          %{related: assoc_schema} when is_atom(assoc_schema) ->
+            quote do
+              def _assoc_schema(unquote(assoc_field)), do: unquote(assoc_schema)
+            end
+
+          other ->
+            raise ArgumentError,
+                  "QueryBuilder.Schema could not resolve association schema for #{inspect(env.module)}.#{inspect(assoc_field)} " <>
+                    "(expected assoc to have a :related schema module, got: #{inspect(other)})"
         end
       end
 
     cardinality_clauses =
-      for {assoc_field, _assoc_schema, cardinality} <- assoc_infos do
+      for {assoc_field, assoc_struct} <- assocs do
         quote do
-          def _assoc_cardinality(unquote(assoc_field)), do: unquote(cardinality)
+          def _assoc_cardinality(unquote(assoc_field)), do: unquote(assoc_struct.cardinality)
         end
       end
 
@@ -193,5 +205,31 @@ defmodule QueryBuilder.Schema do
 
       unquote(join_clause)
     end
+  end
+
+  def has_through_queryable!(owner_schema, through)
+      when is_atom(owner_schema) and is_list(through) do
+    Enum.reduce(through, owner_schema, fn assoc_field, schema ->
+      assoc = schema.__schema__(:association, assoc_field)
+
+      if is_nil(assoc) do
+        raise ArgumentError,
+              "QueryBuilder.Schema could not resolve has_through path #{inspect(through)} because " <>
+                "#{inspect(schema)} has no association #{inspect(assoc_field)}"
+      end
+
+      case assoc do
+        %{related: assoc_schema} when is_atom(assoc_schema) ->
+          assoc_schema
+
+        %Ecto.Association.HasThrough{through: nested_through} when is_list(nested_through) ->
+          has_through_queryable!(schema, nested_through)
+
+        other ->
+          raise ArgumentError,
+                "QueryBuilder.Schema could not resolve has_through path #{inspect(through)} because " <>
+                  "#{inspect(schema)}.#{inspect(assoc_field)} has unsupported assoc reflection: #{inspect(other)}"
+      end
+    end)
   end
 end
