@@ -245,7 +245,7 @@ defmodule QueryBuilder do
 
   def where_any(%QueryBuilder.Query{} = query, assoc_fields, or_groups) do
     or_groups =
-      QueryBuilder.Filters.normalize_or_groups!(
+      QueryBuilder.Utils.normalize_or_groups!(
         or_groups,
         :where_any,
         "where_any/2 and where_any/3"
@@ -748,7 +748,7 @@ defmodule QueryBuilder do
           []
 
         other ->
-          QueryBuilder.Filters.normalize_or_groups!(other, :where_any, "where_exists_subquery/3")
+          QueryBuilder.Utils.normalize_or_groups!(other, :where_any, "where_exists_subquery/3")
       end
 
     where_any_groups = Enum.reject(where_any_groups, &(&1 == []))
@@ -855,7 +855,7 @@ defmodule QueryBuilder do
           []
 
         other ->
-          QueryBuilder.Filters.normalize_or_groups!(
+          QueryBuilder.Utils.normalize_or_groups!(
             other,
             :where_any,
             "where_not_exists_subquery/3"
@@ -1132,7 +1132,7 @@ defmodule QueryBuilder do
 
   def having_any(%QueryBuilder.Query{} = query, assoc_fields, or_groups) do
     or_groups =
-      QueryBuilder.Filters.normalize_or_groups!(
+      QueryBuilder.Utils.normalize_or_groups!(
         or_groups,
         :having_any,
         "having_any/2 and having_any/3"

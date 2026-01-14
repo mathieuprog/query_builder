@@ -56,7 +56,7 @@ defmodule QueryBuilder.FromOpts.Dispatch.Boundary.Validation do
 
   defp validate_or_groups!(or_groups, context) do
     or_groups =
-      QueryBuilder.Filters.normalize_or_groups!(
+      QueryBuilder.Utils.normalize_or_groups!(
         or_groups,
         :where_any,
         "#{context} boundary validation"

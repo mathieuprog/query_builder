@@ -79,6 +79,31 @@ defmodule QueryBuilder.Utils do
             "got: #{inspect(other_assoc_list)}"
   end
 
+  def normalize_or_groups!(or_groups, opt_key, context)
+      when is_atom(opt_key) and is_binary(context) do
+    cond do
+      is_nil(or_groups) ->
+        raise ArgumentError,
+              "#{context} expects `#{opt_key}:` to be a list of filter groups; got nil"
+
+      Keyword.keyword?(or_groups) ->
+        raise ArgumentError,
+              "#{context} expects `#{opt_key}:` to be a list of filter groups like `[[...], [...]]`; " <>
+                "got a keyword list. Wrap it in a list if you intended a single group."
+
+      not is_list(or_groups) ->
+        raise ArgumentError,
+              "#{context} expects `#{opt_key}:` to be a list of filter groups like `[[...], [...]]`; got: #{inspect(or_groups)}"
+
+      Enum.any?(or_groups, &(not is_list(&1))) ->
+        raise ArgumentError,
+              "#{context} expects `#{opt_key}:` groups to be lists (e.g. `[[title: \"A\"], [title: \"B\"]]`); got: #{inspect(or_groups)}"
+
+      true ->
+        or_groups
+    end
+  end
+
   defp resolve_field_and_binding_from_token_cached!(assoc_list, token)
        when is_atom(token) or is_binary(token) do
     case Process.get(@token_cache_key) do
